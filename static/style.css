@@ -1,0 +1,71 @@
+:root {
+  --latar: #f4f1ea;
+  --kartu: #ffffff;
+  --teks: #26231f;
+  --redup: #6b655b;
+  --garis: #d9d3c6;
+  --aksen: #3f5a40;
+  --aksen-teks: #ffffff;
+  --papan-terang: #eadfc4;
+  --papan-gelap: #8a6f4e;
+  --galat: #9b2c2c;
+  --sorot: #f0e6c8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --latar: #1c1a17; --kartu: #26231f; --teks: #ece6d9; --redup: #a39b8c;
+    --garis: #3d382f; --aksen: #7fa57f; --aksen-teks: #14210f;
+    --papan-terang: #cdbf9d; --papan-gelap: #6d563b; --galat: #e08a8a; --sorot: #34301f;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--latar); color: var(--teks); font: 16px/1.5 Georgia, "Times New Roman", serif; }
+.sembunyi { display: none !important; }
+.atas { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 14px 20px; border-bottom: 1px solid var(--garis); background: var(--kartu); }
+.merek { display: flex; gap: 12px; align-items: center; }
+.merek small { display: block; color: var(--redup); font-size: 12px; }
+.logo { font-size: 34px; line-height: 1; }
+.akun { display: flex; gap: 10px; align-items: center; }
+main { max-width: 980px; margin: 0 auto; padding: 16px; }
+.kartu { background: var(--kartu); border: 1px solid var(--garis); border-radius: 6px; padding: 18px 20px; margin-bottom: 16px; }
+h1, h2, h3 { margin: 0 0 8px; }
+h2 { font-size: 20px; } h3 { font-size: 16px; margin-top: 14px; }
+.catatan { color: var(--redup); font-size: 14px; margin: 6px 0; }
+.login { max-width: 380px; margin: 40px auto; }
+label { display: block; font-size: 14px; margin: 10px 0; }
+input { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; font: inherit; color: inherit;
+  background: var(--latar); border: 1px solid var(--garis); border-radius: 4px; }
+button { font: inherit; padding: 8px 16px; border: 1px solid var(--aksen); background: var(--aksen); color: var(--aksen-teks);
+  border-radius: 4px; cursor: pointer; }
+button.sekunder { background: transparent; color: var(--teks); border-color: var(--garis); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 2px solid var(--aksen); outline-offset: 2px; }
+.galat { color: var(--galat); min-height: 1.4em; font-size: 14px; }
+.pesan { padding: 10px 14px; border: 1px solid var(--garis); background: var(--sorot); border-radius: 4px; margin-bottom: 12px; }
+.pesan.galat { color: var(--galat); border-color: var(--galat); }
+.papan-baris { display: flex; gap: 24px; flex-wrap: wrap; }
+.papan { display: grid; grid-template-columns: repeat(8, 1fr); width: min(100%, 360px); aspect-ratio: 1; border: 2px solid var(--garis); }
+.petak { display: flex; align-items: center; justify-content: center; font-size: clamp(20px, 5.4vw, 34px); line-height: 1; }
+.petak.t { background: var(--papan-terang); } .petak.g { background: var(--papan-gelap); }
+.petak.putih { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000; }
+.petak.hitam { color: #111; }
+.info { flex: 1; min-width: 240px; }
+.riwayat { font-family: "Courier New", monospace; font-size: 14px; background: var(--latar); padding: 8px 10px; border-radius: 4px; margin: 0; }
+.kandidat { margin: 4px 0; padding-left: 22px; font-family: "Courier New", monospace; }
+.status { list-style: none; margin: 4px 0; padding: 0; }
+.status li { padding: 4px 0; border-bottom: 1px dashed var(--garis); display: flex; justify-content: space-between; }
+.ok { color: var(--aksen); font-weight: bold; } .tunggu { color: var(--redup); }
+.gulir { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { border: 1px solid var(--garis); padding: 6px 8px; text-align: center; }
+th { background: var(--latar); }
+td.kiri, th.kiri { text-align: left; }
+select { font: inherit; padding: 4px 6px; background: var(--latar); color: inherit; border: 1px solid var(--garis); border-radius: 4px; }
+.aksi { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+.pemenang { font-size: 20px; margin: 4px 0 12px; }
+.baru { margin-top: 14px; } .baru summary { cursor: pointer; }
+.tiga { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+tr.menang td { background: var(--sorot); font-weight: bold; }
+.blok-individual { margin: 10px 0 14px; }
+@media (max-width: 520px) { .tiga { grid-template-columns: 1fr; } main { padding: 10px; } }

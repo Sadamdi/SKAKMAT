@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SKAKMAT - GDSS Langkah Catur</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="atas">
+  <div class="merek"><span class="logo">♚</span><div><strong>SKAKMAT</strong><small>Sistem Kolaborasi Analis untuk Keputusan Melangkah Antar Tim</small></div></div>
+  <div id="akun" class="akun sembunyi"><span id="namaAkun"></span><button id="btnKeluar" class="sekunder">Keluar</button></div>
+</header>
+
+<main>
+  <section id="viewLogin" class="kartu login sembunyi">
+    <h1>Masuk</h1>
+    <p class="catatan">Gunakan akun decision maker: Kapten, Analis 1, Analis 2, atau Analis 3.</p>
+    <form id="formLogin">
+      <label>Nama pengguna<input id="inUser" autocomplete="username" required></label>
+      <label>Kata sandi<input id="inSandi" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Masuk</button>
+      <p id="galatLogin" class="galat" role="alert"></p>
+    </form>
+  </section>
+
+  <div id="viewApp" class="sembunyi">
+    <div id="pesan" class="pesan sembunyi" role="status"></div>
+
+    <section class="kartu">
+      <h2 id="judulKasus"></h2>
+      <div class="papan-baris">
+        <div>
+          <div id="papan" class="papan" aria-label="Posisi papan catur"></div>
+          <p id="giliran" class="catatan"></p>
+        </div>
+        <div class="info">
+          <h3>Riwayat langkah</h3>
+          <p id="riwayat" class="riwayat"></p>
+          <h3>Kandidat langkah</h3>
+          <ol id="kandidat" class="kandidat"></ol>
+          <h3>Status penilaian</h3>
+          <ul id="status" class="status"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="kartuNilai" class="kartu">
+      <h2>Penilaian individual</h2>
+      <p class="catatan">Nilai tiap kandidat pada setiap kriteria dengan skala 1 (sangat buruk) sampai 5 (sangat baik). Untuk kriteria risiko (cost), nilai besar berarti risiko besar. Penilaian dapat diubah sampai konsensus dijalankan.</p>
+      <div class="gulir"><table id="tabelNilai"></table></div>
+      <div class="aksi"><button id="btnKirim">Kirim penilaian</button><span id="infoKirim" class="catatan"></span></div>
+    </section>
+
+    <section id="kartuSaya" class="kartu sembunyi">
+      <h2>Hasil TOPSIS penilaian saya</h2>
+      <div class="gulir"><table id="tabelSaya"></table></div>
+    </section>
+
+    <section id="kartuKapten" class="kartu sembunyi">
+      <h2>Panel Kapten</h2>
+      <p class="catatan">Konsensus kelompok dijalankan oleh akun dengan jabatan tertinggi dengan metode voting Borda, setelah keempat decision maker selesai menilai.</p>
+      <div class="aksi">
+        <button id="btnKonsensus">Jalankan konsensus (Borda)</button>
+        <button id="btnUlang" class="sekunder">Ulangi putaran penilaian</button>
+      </div>
+      <details class="baru">
+        <summary>Buat kasus baru</summary>
+        <form id="formKasus">
+          <label>Judul<input id="kJudul" maxlength="100" required></label>
+          <label>FEN posisi<input id="kFen" required placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"></label>
+          <label>Riwayat langkah<input id="kRiwayat" maxlength="500"></label>
+          <div class="tiga">
+            <label>Kandidat 1<input id="kK1" maxlength="20" required></label>
+            <label>Kandidat 2<input id="kK2" maxlength="20" required></label>
+            <label>Kandidat 3<input id="kK3" maxlength="20" required></label>
+          </div>
+          <button type="submit">Simpan kasus (menghapus penilaian sebelumnya)</button>
+        </form>
+      </details>
+    </section>
+
+    <section id="kartuHasil" class="kartu">
+      <h2>Hasil konsensus kelompok</h2>
+      <p id="belumKonsensus" class="catatan">Konsensus belum dijalankan. Hasil akan tampil di sini untuk seluruh decision maker.</p>
+      <div id="hasilKonsensus" class="sembunyi">
+        <p id="pemenang" class="pemenang"></p>
+        <div class="gulir"><table id="tabelBorda"></table></div>
+        <h3>Penilaian individual seluruh decision maker</h3>
+        <div id="semuaIndividual"></div>
+        <p class="catatan">Hasil ini mencerminkan kesepakatan kelompok, bukan jaminan langkah terbaik atau kemenangan.</p>
+      </div>
+    </section>
+  </div>
+</main>
+<script src="/app.js"></script>
+</body>
+</html>
