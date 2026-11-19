@@ -16,11 +16,17 @@ const NAMA_BIDAK = { k: "raja", q: "menteri", r: "benteng", b: "gajah", n: "kuda
 let data = null;
 let tandaForm = "";
 
-async function api(path, body) {
-  const opsi = body === undefined ? {} : {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+async function api(path, body, signal) {
+  const opsi = body === undefined ? { signal } : {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
   };
-  const r = await fetch(path, opsi);
+  let r;
+  try {
+    r = await fetch(path, opsi);
+  } catch (e) {
+    if (e.name === "AbortError") throw e;
+    throw new Error("Tidak dapat menghubungi server. Periksa koneksi lalu coba lagi.");
+  }
   let j = {};
   try { j = await r.json(); } catch (e) { /* abaikan */ }
   if (!r.ok) {
@@ -31,11 +37,11 @@ async function api(path, body) {
   return j;
 }
 
-function pesan(teks, galat) {
-  const p = $("pesan");
-  p.textContent = teks;
-  p.className = "pesan" + (galat ? " galat" : "");
-  if (!teks) p.classList.add("sembunyi");
+// Wadah pesan selalu ada di DOM (role="status"/"alert"); bila kosong disembunyikan lewat CSS :empty.
+function pesan(teks, galat, id = "pesan") {
+  const p = $(id);
+  p.textContent = teks || "";
+  p.classList.toggle("galat", !!galat);
 }
 
 function gambarPapan(fen) {
@@ -69,50 +75,122 @@ function petak(r, c, ch) {
   return e;
 }
 
-function tabel(t, kepala, baris, kelasBaris) {
+// Tabel dengan caption (tersembunyi visual), scope kolom/baris, dan aria-label.
+function tabel(t, judul, kepala, baris, kelasBaris) {
   t.replaceChildren();
+  t.setAttribute("aria-label", judul);
+  t.append(el("caption", "sr", judul));
+  const thead = el("thead");
   const th = el("tr");
-  kepala.forEach((h, i) => th.append(el("th", i === 0 ? "kiri" : "", h)));
-  t.append(th);
+  kepala.forEach((h, i) => {
+    const c = el("th", i === 0 ? "kiri" : "", h);
+    c.scope = "col";
+    th.append(c);
+  });
+  thead.append(th);
+  const tbody = el("tbody");
   baris.forEach((b, idx) => {
     const tr = el("tr", kelasBaris && kelasBaris(idx));
-    b.forEach((v, i) => tr.append(el("td", i === 0 ? "kiri" : "", v)));
-    t.append(tr);
+    b.forEach((v, i) => {
+      const c = el(i === 0 ? "th" : "td", i === 0 ? "kiri" : "", v);
+      if (i === 0) c.scope = "row";
+      tr.append(c);
+    });
+    tbody.append(tr);
   });
+  t.append(thead, tbody);
 }
+
+// Label skala 1..5; untuk kriteria cost nilai besar berarti risiko besar (buruk).
+const SKALA = {
+  benefit: ["sangat buruk", "buruk", "cukup", "baik", "sangat baik"],
+  cost: ["risiko sangat kecil", "risiko kecil", "risiko sedang", "risiko besar", "risiko sangat besar"],
+};
+const KET_COST = "cost: makin besar makin berisiko";
 
 function formNilai() {
   const t = $("tabelNilai");
+  const judul = "Formulir penilaian kandidat langkah pada lima kriteria, skala 1 sampai 5";
   t.replaceChildren();
+  t.setAttribute("aria-label", judul);
+  t.append(el("caption", "sr", judul));
   const kep = el("tr");
-  kep.append(el("th", "kiri", "Kandidat"));
-  data.kriteria.forEach((k) => kep.append(el("th", "", `${k.kode} ${k.nama} (${k.bobot}%, ${k.jenis})`)));
-  t.append(kep);
+  const thK = el("th", "kiri", "Kandidat");
+  thK.scope = "col";
+  kep.append(thK);
+  data.kriteria.forEach((k) => {
+    const cost = k.jenis === "cost";
+    const th = el("th", cost ? "cost" : "");
+    th.scope = "col";
+    th.append(el("span", "kode", `${k.kode} ${k.nama}`));
+    th.append(el("span", "bobot", `bobot ${k.bobot}% · ${cost ? KET_COST : "benefit"}`));
+    kep.append(th);
+  });
+  const thead = el("thead");
+  thead.append(kep);
+  const tbody = el("tbody");
   data.kasus.kandidat.forEach((nama, i) => {
     const tr = el("tr");
-    tr.append(el("td", "kiri", nama));
+    const thNama = el("th", "kiri", nama);
+    thNama.scope = "row";
+    tr.append(thNama);
     data.kriteria.forEach((k, j) => {
-      const td = el("td");
+      const cost = k.jenis === "cost";
+      const td = el("td", cost ? "cost" : "");
+      // data-label dipakai CSS untuk tampilan kartu di layar sempit.
+      td.dataset.label = `${k.kode} ${k.nama}${cost ? ` (${KET_COST})` : ""}`;
       const s = el("select");
       s.id = `n_${i}_${j}`;
-      s.setAttribute("aria-label", `${nama} - ${k.nama}`);
-      for (let v = 1; v <= 5; v++) s.append(new Option(String(v), String(v)));
+      s.setAttribute("aria-label", `${nama}, ${k.kode} ${k.nama}${cost ? `, ${KET_COST}` : ""}`);
+      SKALA[cost ? "cost" : "benefit"].forEach((ket, v) => s.append(new Option(`${v + 1} – ${ket}`, String(v + 1))));
       s.value = data.skor_saya ? String(data.skor_saya[i][j]) : "3";
       s.disabled = !!data.konsensus;
       td.append(s);
       tr.append(td);
     });
-    t.append(tr);
+    tbody.append(tr);
   });
-  $("btnKirim").disabled = !!data.konsensus;
-  $("infoKirim").textContent = data.konsensus ? "Penilaian dikunci karena konsensus sudah dijalankan."
-    : (data.skor_saya ? "Anda sudah mengirim penilaian." : "Anda belum mengirim penilaian.");
+  t.append(thead, tbody);
+  infoKirim(false);
 }
 
-function tabelTopsis(t, hasil, kandidat) {
-  tabel(t, ["Kandidat", "D+", "D−", "Skor preferensi (V)", "Peringkat"],
+function infoKirim(berubah) {
+  $("infoKirim").textContent = data.konsensus ? "Penilaian dikunci karena konsensus sudah dijalankan."
+    : berubah ? "Ada perubahan yang belum dikirim."
+      : (data.skor_saya ? "Anda sudah mengirim penilaian." : "Anda belum mengirim penilaian.");
+}
+
+function tabelTopsis(t, judul, hasil, kandidat) {
+  tabel(t, judul, ["Kandidat", "D+", "D−", "Skor preferensi (V)", "Peringkat"],
     kandidat.map((n, i) => [n, f(hasil.d_plus[i]), f(hasil.d_min[i]), f(hasil.v[i]), String(hasil.rank[i])]),
     (i) => (hasil.rank[i] === 1 ? "menang" : ""));
+}
+
+// Status tombol dihitung terpisah dari render agar bisa dipulihkan setelah permintaan selesai.
+function aturTombol() {
+  if (!data) return;
+  $("btnKirim").disabled = !!data.konsensus;
+  $("btnKonsensus").disabled = !data.semua_sudah || !!data.konsensus;
+}
+
+function renderStatus() {
+  const st = $("status");
+  st.replaceChildren();
+  data.status.forEach((s) => {
+    const li = el("li");
+    li.append(el("span", "", s.nama + (s.id === data.pengguna.id ? " (Anda)" : "")));
+    li.append(el("span", s.sudah ? "ok" : "tunggu", s.sudah ? "✓ sudah menilai" : "○ belum menilai"));
+    st.append(li);
+  });
+  const belum = data.status.filter((s) => !s.sudah).map((s) => s.nama);
+  const ringkas = data.konsensus ? "Konsensus sudah dijalankan; penilaian dikunci."
+    : belum.length ? `Menunggu penilaian dari: ${belum.join(", ")}.`
+      : "Keempat decision maker sudah menilai.";
+  $("ringkasStatus").textContent = ringkas;
+  $("ringkasStatus").classList.toggle("tunggu-kotak", !data.konsensus && belum.length > 0);
+  $("infoKonsensus").textContent = data.konsensus ? "Konsensus untuk kasus ini sudah dijalankan."
+    : belum.length ? `Tombol konsensus aktif setelah semua menilai. Belum menilai: ${belum.join(", ")}.`
+      : "Semua sudah menilai. Konsensus siap dijalankan.";
 }
 
 function render() {
@@ -124,14 +202,7 @@ function render() {
   const ol = $("kandidat");
   ol.replaceChildren();
   kasus.kandidat.forEach((k) => ol.append(el("li", "", k)));
-  const st = $("status");
-  st.replaceChildren();
-  data.status.forEach((s) => {
-    const li = el("li");
-    li.append(el("span", "", s.nama));
-    li.append(el("span", s.sudah ? "ok" : "tunggu", s.sudah ? "sudah menilai" : "belum menilai"));
-    st.append(li);
-  });
+  renderStatus();
   // Form nilai hanya digambar ulang bila kasus, penilaian tersimpan, atau status konsensus berubah,
   // supaya pilihan yang belum dikirim tidak tertimpa oleh penyegaran berkala.
   const tanda = JSON.stringify([kasus.id, data.skor_saya, !!data.konsensus]);
@@ -139,19 +210,20 @@ function render() {
 
   const saya = !!data.topsis_saya;
   $("kartuSaya").classList.toggle("sembunyi", !saya);
-  if (saya) tabelTopsis($("tabelSaya"), data.topsis_saya, kasus.kandidat);
+  if (saya) tabelTopsis($("tabelSaya"), "Hasil TOPSIS penilaian Anda", data.topsis_saya, kasus.kandidat);
 
   const kapten = pengguna.tingkat === 1;
   $("kartuKapten").classList.toggle("sembunyi", !kapten);
-  $("btnKonsensus").disabled = !data.semua_sudah || !!data.konsensus;
+  aturTombol();
 
   const k = data.konsensus;
   $("belumKonsensus").classList.toggle("sembunyi", !!k);
   $("hasilKonsensus").classList.toggle("sembunyi", !k);
   if (k) {
-    $("pemenang").textContent = `Langkah terpilih: ${k.pemenang}  (dijalankan oleh ${k.dijalankan_oleh})`;
+    const p = $("pemenang");
+    p.replaceChildren("Langkah terpilih: ", el("strong", "", k.pemenang), ` (dijalankan oleh ${k.dijalankan_oleh})`);
     const b = k.borda;
-    tabel($("tabelBorda"), ["Kandidat", "Poin Borda", "Nilai Borda", "Peringkat"],
+    tabel($("tabelBorda"), "Hasil voting Borda kelompok", ["Kandidat", "Poin Borda", "Nilai Borda", "Peringkat"],
       kasus.kandidat.map((n, i) => [n, f(b.poin[i]), f(b.nilai[i]), String(b.rank[i])]),
       (i) => (b.rank[i] === 1 ? "menang" : ""));
     const wadah = $("semuaIndividual");
@@ -160,7 +232,7 @@ function render() {
       const blok = el("div", "blok-individual");
       blok.append(el("h4", "", ind.nama));
       const t = el("table");
-      tabelTopsis(t, ind.topsis, kasus.kandidat);
+      tabelTopsis(t, `Hasil TOPSIS ${ind.nama}`, ind.topsis, kasus.kandidat);
       const gulir = el("div", "gulir");
       gulir.append(t);
       blok.append(gulir);
@@ -169,73 +241,222 @@ function render() {
   }
 }
 
-async function muat() {
+// ------------------------------------------------------------------ pemuatan dan penyegaran
+const JEDA_SEGAR = 15000;
+const SESI_HABIS = "Sesi berakhir, silakan masuk lagi.";
+let pengendali = null;   // AbortController untuk /api/kasus yang sedang berjalan (maksimal satu)
+let waktuMuat = 0;
+let sibuk = 0;           // jumlah aksi pengguna yang sedang dikirim
+
+const jam = (t) => new Date(t).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+function infoSegar(teks) {
+  $("infoSegar").textContent = teks !== undefined ? teks : !data ? ""
+    : `Diperbarui pukul ${jam(waktuMuat)}. ` + (data.konsensus
+      ? "Hasil sudah final; penyegaran otomatis berhenti."
+      : `Diperbarui otomatis tiap ${JEDA_SEGAR / 1000} detik.`);
+}
+
+// paksa = true membatalkan permintaan yang sedang berjalan (dipakai setelah aksi pengguna);
+// penyegaran berkala (paksa = false) dilewati bila masih ada permintaan berjalan.
+async function muat(paksa) {
+  if (pengendali) {
+    if (!paksa) return;
+    pengendali.abort();
+  }
+  const ini = new AbortController();
+  pengendali = ini;
+  infoSegar("Menyegarkan…");
+  $("infoSegar").parentElement.setAttribute("aria-busy", "true");
   try {
-    data = await api("/api/kasus");
-    $("viewLogin").classList.add("sembunyi");
-    $("viewApp").classList.remove("sembunyi");
-    $("akun").classList.remove("sembunyi");
+    data = await api("/api/kasus", undefined, ini.signal);
+    waktuMuat = Date.now();
+    tampilApp();
+    pesan("");
     render();
   } catch (e) {
-    if (e.status === 401) return tampilLogin();
+    if (e.name === "AbortError") return;
+    if (e.status === 401) return tampilLogin(data ? SESI_HABIS : "");
     pesan(e.message, true);
+  } finally {
+    if (pengendali === ini) {
+      pengendali = null;
+      $("infoSegar").parentElement.removeAttribute("aria-busy");
+      infoSegar();
+    }
   }
 }
-function tampilLogin() {
+
+function tampilApp() {
+  $("viewMuat").classList.add("sembunyi");
+  $("viewLogin").classList.add("sembunyi");
+  $("viewApp").classList.remove("sembunyi");
+  $("akun").classList.remove("sembunyi");
+}
+function tampilLogin(info) {
+  if (pengendali) { pengendali.abort(); pengendali = null; }
   data = null;
   tandaForm = "";
+  $("viewMuat").classList.add("sembunyi");
   $("viewApp").classList.add("sembunyi");
   $("akun").classList.add("sembunyi");
   $("viewLogin").classList.remove("sembunyi");
+  $("infoLogin").textContent = info || "";
+  if (info) $("inUser").focus();
 }
 
-$("formLogin").addEventListener("submit", async (ev) => {
+// Galat aksi: sesi habis kembali ke login dengan penjelasan, selain itu tampil di wadah pesan terkait.
+function tanganiGalat(e, id) {
+  if (e.status === 401) return tampilLogin(SESI_HABIS);
+  pesan(e.message, true, id);
+}
+
+// Tombol langsung dinonaktifkan dan teksnya berubah selama permintaan, mencegah kirim ganda.
+async function kirimDengan(tombol, teksSibuk, kerja) {
+  if (tombol.disabled) return;
+  const teksAsli = tombol.textContent;
+  tombol.disabled = true;
+  tombol.textContent = teksSibuk;
+  tombol.setAttribute("aria-busy", "true");
+  sibuk++;
+  try {
+    await kerja();
+  } finally {
+    sibuk--;
+    tombol.textContent = teksAsli;
+    tombol.disabled = false;
+    tombol.removeAttribute("aria-busy");
+    aturTombol();
+  }
+}
+
+// ------------------------------------------------------------------ validasi FEN di sisi klien
+// Mencerminkan fen_valid() di app.py, tetapi dengan pesan yang menunjuk letak kesalahan.
+// Server tetap menjadi pemeriksa akhir.
+function cekFen(fen) {
+  const bagian = fen.trim().split(/\s+/);
+  if (bagian.length < 2 || !bagian[0]) {
+    return "FEN harus berisi minimal dua bagian yang dipisah spasi: susunan bidak dan giliran (w atau b).";
+  }
+  const baris = bagian[0].split("/");
+  if (baris.length !== 8) return `Susunan bidak harus 8 baris yang dipisah "/", bukan ${baris.length} baris.`;
+  for (let i = 0; i < 8; i++) {
+    let n = 0;
+    for (const ch of baris[i]) {
+      if (/[1-8]/.test(ch)) n += Number(ch);
+      else if ("prnbqkPRNBQK".includes(ch)) n += 1;
+      else return `Karakter "${ch}" pada baris ke-${i + 1} tidak dikenal. Pakai huruf bidak (KQRBNP / kqrbnp) atau angka 1–8.`;
+    }
+    if (n !== 8) return `Baris ke-${i + 1} ("${baris[i]}") berisi ${n} petak; setiap baris harus tepat 8 petak.`;
+  }
+  if (bagian[1] !== "w" && bagian[1] !== "b") return `Giliran harus "w" (putih) atau "b" (hitam), bukan "${bagian[1]}".`;
+  return "";
+}
+
+// ------------------------------------------------------------------ peristiwa
+$("formLogin").addEventListener("submit", (ev) => {
   ev.preventDefault();
   $("galatLogin").textContent = "";
-  try {
-    await api("/api/login", { username: $("inUser").value.trim(), sandi: $("inSandi").value });
-    $("inSandi").value = "";
-    await muat();
-  } catch (e) { $("galatLogin").textContent = e.message; }
+  kirimDengan($("btnMasuk"), "Memeriksa…", async () => {
+    try {
+      await api("/api/login", { username: $("inUser").value.trim(), sandi: $("inSandi").value });
+      $("inSandi").value = "";
+      $("infoLogin").textContent = "";
+      await muat(true);
+    } catch (e) { $("galatLogin").textContent = e.message; }
+  });
 });
-$("btnKeluar").addEventListener("click", async () => { await api("/api/keluar", {}); tampilLogin(); });
+$("btnKeluar").addEventListener("click", () => kirimDengan($("btnKeluar"), "Keluar…", async () => {
+  try {
+    await api("/api/keluar", {});
+    tampilLogin("");
+  } catch (e) {
+    if (e.status === 401) tampilLogin("");
+    else pesan(e.message, true);
+  }
+}));
+$("btnSegar").addEventListener("click", () => kirimDengan($("btnSegar"), "Menyegarkan…", () => muat(true)));
 
-$("btnKirim").addEventListener("click", async () => {
+$("tabelNilai").addEventListener("change", () => { if (data) infoKirim(true); });
+$("btnKirim").addEventListener("click", () => kirimDengan($("btnKirim"), "Mengirim…", async () => {
   const skor = data.kasus.kandidat.map((_, i) => data.kriteria.map((__, j) => Number($(`n_${i}_${j}`).value)));
+  pesan("", false, "pesanNilai");
   try {
     await api("/api/nilai", { skor });
-    pesan("Penilaian tersimpan.", false);
-    await muat();
-  } catch (e) { pesan(e.message, true); }
-});
-$("btnKonsensus").addEventListener("click", async () => {
+    pesan(`Penilaian tersimpan pukul ${jam(Date.now())}.`, false, "pesanNilai");
+    await muat(true);
+  } catch (e) { tanganiGalat(e, "pesanNilai"); }
+}));
+$("btnKonsensus").addEventListener("click", () => kirimDengan($("btnKonsensus"), "Menjalankan…", async () => {
+  pesan("", false, "pesanKapten");
   try {
     await api("/api/konsensus", {});
-    pesan("Konsensus Borda selesai dijalankan.", false);
-    await muat();
-  } catch (e) { pesan(e.message, true); }
-});
-$("btnUlang").addEventListener("click", async () => {
+    pesan("Konsensus Borda selesai dijalankan.", false, "pesanKapten");
+    await muat(true);
+  } catch (e) { tanganiGalat(e, "pesanKapten"); }
+}));
+$("btnUlang").addEventListener("click", () => {
   if (!confirm("Hapus semua penilaian dan hasil konsensus pada kasus ini?")) return;
-  try { await api("/api/ulang", {}); pesan("Putaran penilaian diulang.", false); await muat(); }
-  catch (e) { pesan(e.message, true); }
+  kirimDengan($("btnUlang"), "Mengulang…", async () => {
+    pesan("", false, "pesanKapten");
+    try {
+      await api("/api/ulang", {});
+      pesan("Putaran penilaian diulang. Semua decision maker perlu menilai lagi.", false, "pesanKapten");
+      await muat(true);
+    } catch (e) { tanganiGalat(e, "pesanKapten"); }
+  });
 });
-$("formKasus").addEventListener("submit", async (ev) => {
+$("kFen").addEventListener("input", () => {
+  $("kFen").removeAttribute("aria-invalid");
+  $("galatKasus").textContent = "";
+});
+$("formKasus").addEventListener("submit", (ev) => {
   ev.preventDefault();
-  try {
-    await api("/api/kasus-baru", {
-      judul: $("kJudul").value, fen: $("kFen").value, riwayat: $("kRiwayat").value,
-      kandidat: [$("kK1").value, $("kK2").value, $("kK3").value],
-    });
-    $("formKasus").reset();
-    pesan("Kasus baru dibuat.", false);
-    await muat();
-  } catch (e) { pesan(e.message, true); }
+  const salah = cekFen($("kFen").value);
+  if (salah) {
+    $("galatKasus").textContent = "FEN ditolak: " + salah;
+    $("kFen").setAttribute("aria-invalid", "true");
+    $("kFen").focus();
+    return;
+  }
+  kirimDengan($("btnSimpan"), "Menyimpan…", async () => {
+    $("galatKasus").textContent = "";
+    try {
+      await api("/api/kasus-baru", {
+        judul: $("kJudul").value, fen: $("kFen").value, riwayat: $("kRiwayat").value,
+        kandidat: [$("kK1").value, $("kK2").value, $("kK3").value],
+      });
+      $("formKasus").reset();
+      pesan("Kasus baru dibuat. Penilaian dimulai dari awal.", false, "pesanKapten");
+      await muat(true);
+    } catch (e) {
+      if (e.status === 401) tampilLogin(SESI_HABIS);
+      else $("galatKasus").textContent = e.message;
+    }
+  });
 });
 
 // Penyegaran berkala agar status penilaian dan hasil konsensus muncul tanpa muat ulang halaman.
-setInterval(() => {
+// Dilewati bila: belum masuk, hasil sudah final, tab tidak aktif, permintaan/aksi masih berjalan,
+// atau pengguna sedang memilih nilai pada dropdown.
+function perluSegar() {
+  if (!data || data.konsensus || document.hidden || pengendali || sibuk) return false;
   const aktif = document.activeElement;
-  if (data && !(aktif && aktif.tagName === "SELECT")) muat();
-}, 8000);
-muat();
+  return !(aktif && aktif.tagName === "SELECT");
+}
+setInterval(() => { if (perluSegar()) muat(false); }, JEDA_SEGAR);
+document.addEventListener("visibilitychange", () => {
+  if (perluSegar() && Date.now() - waktuMuat >= JEDA_SEGAR) muat(false);
+});
+
+// Muat awal: /api/me tidak menghasilkan 401 saat belum masuk, jadi konsol tetap bersih.
+(async () => {
+  try {
+    const me = await api("/api/me");
+    if (me.pengguna) await muat(true);
+    else tampilLogin("");
+  } catch (e) {
+    tampilLogin("");
+    $("galatLogin").textContent = e.message;
+  }
+})();
