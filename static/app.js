@@ -173,21 +173,61 @@ function aturTombol() {
   $("btnKonsensus").disabled = !data.semua_sudah || !!data.konsensus;
 }
 
+// ------------------------------------------------------------------ identitas decision maker
+// Setiap decision maker mendapat warna aksen + inisial yang sama di seluruh halaman.
+// Kunci = tingkat jabatan (ada di status, individual, dan pengguna). Jumlah orang tidak di-hardcode:
+// urutan diambil dari data.status, warna berputar bila lebih dari empat.
+const JUMLAH_WARNA = 4;
+function inisial(nama) {
+  return String(nama).trim().split(/\s+/).map((w) => (/^\d+$/.test(w) ? w : w.charAt(0).toUpperCase())).join("").slice(0, 3);
+}
+function identitas(orang) {
+  const urut = data.status.findIndex((s) => s.tingkat === orang.tingkat);
+  const i = urut < 0 ? 0 : urut;
+  return { kelas: `dm-${(i % JUMLAH_WARNA) + 1}`, inisial: inisial(orang.nama), koordinator: orang.tingkat === 1 };
+}
+// Lencana: lingkaran berwarna (koordinator: kotak membulat) berisi inisial. Dekoratif bagi pembaca layar
+// karena nama selalu ditulis di sebelahnya.
+function lencana(orang) {
+  const id = identitas(orang);
+  const e = el("span", `lencana ${id.kelas}${id.koordinator ? " koord" : ""}`, id.inisial);
+  e.setAttribute("aria-hidden", "true");
+  return e;
+}
+function tagPeran(orang) {
+  return orang.tingkat === 1 ? el("span", "tag-peran", "koordinator") : null;
+}
+// Lencana + nama (+ tag koordinator) sebagai satu kesatuan.
+function namaDm(orang, tambahan = "") {
+  const w = el("span", `nama-dm ${identitas(orang).kelas}`);
+  w.append(lencana(orang), el("span", "", orang.nama + tambahan));
+  const t = tagPeran(orang);
+  if (t) w.append(t);
+  return w;
+}
+
 function renderStatus() {
   const st = $("status");
   st.replaceChildren();
   data.status.forEach((s) => {
-    const li = el("li");
-    li.append(el("span", "", s.nama + (s.id === data.pengguna.id ? " (Anda)" : "")));
+    const li = el("li", identitas(s).kelas);
+    li.append(namaDm(s, s.id === data.pengguna.id ? " (Anda · perangkat ini)" : ""));
     li.append(el("span", s.sudah ? "ok" : "tunggu", s.sudah ? "✓ sudah menilai" : "○ belum menilai"));
     st.append(li);
   });
-  const belum = data.status.filter((s) => !s.sudah).map((s) => s.nama);
-  const ringkas = data.konsensus ? "Konsensus sudah dijalankan; penilaian dikunci."
-    : belum.length ? `Menunggu penilaian dari: ${belum.join(", ")}.`
-      : "Keempat decision maker sudah menilai.";
-  $("ringkasStatus").textContent = ringkas;
-  $("ringkasStatus").classList.toggle("tunggu-kotak", !data.konsensus && belum.length > 0);
+  const belumOrang = data.status.filter((s) => !s.sudah);
+  const belum = belumOrang.map((s) => s.nama);
+  const rs = $("ringkasStatus");
+  if (data.konsensus) rs.textContent = "Konsensus sudah dijalankan; penilaian dikunci.";
+  else if (belum.length) {
+    rs.replaceChildren("Menunggu penilaian dari: ");
+    belumOrang.forEach((s, i) => {
+      if (i) rs.append(", ");
+      rs.append(namaDm(s));
+    });
+    rs.append(".");
+  } else rs.textContent = `Semua ${data.status.length} decision maker sudah menilai.`;
+  rs.classList.toggle("tunggu-kotak", !data.konsensus && belum.length > 0);
   $("infoKonsensus").textContent = data.konsensus ? "Konsensus untuk kasus ini sudah dijalankan."
     : belum.length ? `Tombol konsensus aktif setelah semua menilai. Belum menilai: ${belum.join(", ")}.`
       : "Semua sudah menilai. Konsensus siap dijalankan.";
@@ -195,8 +235,13 @@ function renderStatus() {
 
 function render() {
   const { pengguna, kasus } = data;
-  $("namaAkun").textContent = `${pengguna.nama}${pengguna.tingkat === 1 ? " (jabatan tertinggi)" : ""}`;
+  $("namaAkun").textContent = `${pengguna.nama}${pengguna.tingkat === 1 ? " (koordinator)" : ""}`;
+  $("lencanaAkun").replaceChildren(lencana(pengguna));
   $("judulKasus").textContent = kasus.judul;
+  // Satu tim, satu sisi papan: sisi tim = pihak yang berjalan menurut FEN.
+  const sisi = kasus.fen.split(" ")[1] === "w" ? "putih" : "hitam";
+  $("tim").textContent = `Satu tim memainkan bidak ${sisi}. ${data.status.length} decision maker menilai dari perangkat masing-masing; `
+    + "Kapten ikut menilai dan menjadi koordinator yang menjalankan konsensus.";
   gambarPapan(kasus.fen);
   $("riwayat").textContent = kasus.riwayat || "(belum ada langkah)";
   const ol = $("kandidat");
@@ -229,8 +274,10 @@ function render() {
     const wadah = $("semuaIndividual");
     wadah.replaceChildren();
     (data.individual || []).forEach((ind) => {
-      const blok = el("div", "blok-individual");
-      blok.append(el("h4", "", ind.nama));
+      const blok = el("div", `blok-individual ${identitas(ind).kelas}`);
+      const h = el("h4");
+      h.append(namaDm(ind));
+      blok.append(h);
       const t = el("table");
       tabelTopsis(t, `Hasil TOPSIS ${ind.nama}`, ind.topsis, kasus.kandidat);
       const gulir = el("div", "gulir");
@@ -238,7 +285,143 @@ function render() {
       blok.append(gulir);
       wadah.append(blok);
     });
+    renderAnimasi(k);
+  } else {
+    hentikanAnimasi();
+    tandaAnimasi = "";
   }
+  renderEngine();
+}
+
+// ------------------------------------------------------------------ animasi penggabungan Borda
+// Yang dianimasikan hanyalah penjumlahan: poin Borda tiap penilai (bobot peringkat × V) ditumpuk per
+// kandidat, satu penilai per langkah, lalu kandidat dengan total terbesar ditandai. Tidak ada analisis
+// posisi di sini. Hasil akhir (teks pemenang + tabel Borda di atas) sudah tampil sebelum animasi mulai.
+const JEDA_LANGKAH = 350;
+const gerakDikurangi = matchMedia("(prefers-reduced-motion: reduce)");
+let tandaAnimasi = "";
+let pewaktu = [];
+let modelAnimasi = null;
+
+function hentikanAnimasi() {
+  pewaktu.forEach(clearTimeout);
+  pewaktu = [];
+}
+
+// Hitung sumbangan poin tiap penilai dari data yang sudah dikirim server (rank, V, bobot Borda).
+// Bila jumlahnya tidak sama dengan poin Borda dari server, animasi tidak ditampilkan.
+function hitungSumbangan(k) {
+  const ind = data.individual || [];
+  const b = k.borda;
+  const n = data.kasus.kandidat.length;
+  if (!ind.length || !b.bobot_borda) return null;
+  const sumbangan = ind.map((o) => data.kasus.kandidat.map((_, i) => b.bobot_borda[o.topsis.rank[i] - 1] * o.topsis.v[i]));
+  for (let i = 0; i < n; i++) {
+    const total = sumbangan.reduce((a, s) => a + s[i], 0);
+    if (Math.abs(total - b.poin[i]) > 1e-9) return null;
+  }
+  return { ind, sumbangan, maks: Math.max(...b.poin) || 1 };
+}
+
+function renderAnimasi(k) {
+  const tanda = JSON.stringify([data.kasus.id, k.borda.poin]);
+  if (tanda === tandaAnimasi) return;
+  tandaAnimasi = tanda;
+  hentikanAnimasi();
+  const m = hitungSumbangan(k);
+  modelAnimasi = m;
+  $("animasi").classList.toggle("sembunyi", !m);
+  if (!m) return;
+  const kandidat = data.kasus.kandidat;
+  const b = k.borda;
+  $("judulAnimasi").textContent = `Bagaimana ${m.ind.length} peringkat individual digabung`;
+  $("ketAnimasi").textContent = `Tiap penilai menyumbang poin ke setiap kandidat: bobot peringkatnya (${b.bobot_borda.join(", ")} untuk peringkat 1, 2, 3) `
+    + "dikali skor preferensi V dari TOPSIS-nya. Poin dari semua penilai dijumlahkan; kandidat dengan total terbesar menjadi keputusan kelompok.";
+
+  // Batang bertumpuk per kandidat; satu segmen per penilai, warna = identitas penilai.
+  const batang = $("batang");
+  batang.replaceChildren();
+  kandidat.forEach((nama, i) => {
+    const baris = el("div", "batang-baris");
+    baris.dataset.kandidat = String(i);
+    baris.append(el("span", "batang-nama", nama));
+    const jalur = el("div", "batang-jalur");
+    m.ind.forEach((o, d) => {
+      const seg = el("span", `segmen ${identitas(o).kelas}`);
+      seg.dataset.penilai = String(d);
+      const lebar = (m.sumbangan[d][i] / m.maks) * 100;
+      seg.dataset.lebar = lebar.toFixed(3);
+      if (lebar >= 9) seg.textContent = identitas(o).inisial;
+      jalur.append(seg);
+    });
+    baris.append(jalur, el("span", "batang-total", f(0)));
+    batang.append(baris);
+  });
+
+  // Tabel peringkat individual: dari mana poin tiap kandidat berasal.
+  tabel($("tabelPeringkat"), "Sumbangan poin Borda tiap penilai per kandidat",
+    ["Penilai", ...kandidat],
+    [...m.ind.map((o, d) => [o.nama, ...kandidat.map((_, i) => `#${o.topsis.rank[i]} → ${b.bobot_borda[o.topsis.rank[i] - 1]} × ${f(o.topsis.v[i])} = ${f(m.sumbangan[d][i])}`)]),
+      ["Total poin", ...kandidat.map((_, i) => f(b.poin[i]))]],
+    (r) => (r === m.ind.length ? "total" : identitas(m.ind[r]).kelas));
+  // Lencana di kolom penilai.
+  $("tabelPeringkat").querySelectorAll("tbody tr").forEach((tr, r) => {
+    if (r < m.ind.length) tr.firstChild.replaceChildren(namaDm(m.ind[r]));
+  });
+  putarAnimasi();
+}
+
+function setLangkah(d) {
+  // d = jumlah penilai yang sudah ditumpuk (0..n); d = n+1 berarti pemenang ditandai.
+  const m = modelAnimasi;
+  const b = data.konsensus.borda;
+  const n = m.ind.length;
+  $("batang").querySelectorAll(".batang-baris").forEach((baris) => {
+    const i = Number(baris.dataset.kandidat);
+    let total = 0;
+    baris.querySelectorAll(".segmen").forEach((seg) => {
+      const p = Number(seg.dataset.penilai);
+      const tampil = p < d;
+      seg.style.width = tampil ? seg.dataset.lebar + "%" : "0%";
+      seg.classList.toggle("baru", p === d - 1 && d <= n);
+      if (tampil) total += m.sumbangan[p][i];
+    });
+    baris.querySelector(".batang-total").textContent = f(d > n ? b.poin[i] : total);
+    baris.classList.toggle("menang", d > n && b.rank[i] === 1);
+  });
+  $("tabelPeringkat").querySelectorAll("tbody tr").forEach((tr, r) => {
+    tr.classList.toggle("aktif", r === d - 1 && d <= n);
+  });
+  $("langkahAnim").textContent = d === 0 ? "Mulai dari nol poin."
+    : d <= n ? `Menambahkan poin dari ${m.ind[d - 1].nama} (${d} dari ${n} penilai).`
+      : `Semua poin terkumpul. Keputusan kelompok: ${data.konsensus.pemenang}.`;
+}
+
+function putarAnimasi() {
+  hentikanAnimasi();
+  if (!modelAnimasi) return;
+  const n = modelAnimasi.ind.length;
+  const diam = gerakDikurangi.matches;
+  $("btnPutar").classList.toggle("sembunyi", diam);
+  if (diam) return setLangkah(n + 1);   // kurangi gerakan: langsung hasil akhir
+  setLangkah(0);
+  for (let d = 1; d <= n + 1; d++) pewaktu.push(setTimeout(() => setLangkah(d), d * JEDA_LANGKAH));
+}
+
+// ------------------------------------------------------------------ pembanding engine
+// Engine hanya pembanding, bukan kriteria. Selama server belum mengirim field `engine`,
+// tampilkan status jujur tanpa angka apa pun.
+function renderEngine() {
+  const e = data && data.engine;
+  const st = $("statusEngine");
+  $("wadahEngine").classList.add("sembunyi");
+  $("ketEngine").classList.add("sembunyi");
+  st.className = "status-engine kosong";
+  if (!e) {
+    st.textContent = "Pembanding engine belum tersedia. Server belum menyediakan peringkat engine, jadi belum ada yang dibandingkan.";
+    return;
+  }
+  st.textContent = "Pembanding engine tidak tersedia" + (e.alasan ? `: ${e.alasan}` : ".");
 }
 
 // ------------------------------------------------------------------ pemuatan dan penyegaran
@@ -375,6 +558,8 @@ $("btnKeluar").addEventListener("click", () => kirimDengan($("btnKeluar"), "Kelu
     else pesan(e.message, true);
   }
 }));
+$("btnPutar").addEventListener("click", putarAnimasi);
+gerakDikurangi.addEventListener("change", () => { if (modelAnimasi && data && data.konsensus) putarAnimasi(); });
 $("btnSegar").addEventListener("click", () => kirimDengan($("btnSegar"), "Menyegarkan…", () => muat(true)));
 
 $("tabelNilai").addEventListener("change", () => { if (data) infoKirim(true); });
