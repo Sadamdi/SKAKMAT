@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 skakmat.db
 *.db
+
+# tangkapan layar verifikasi front end (tidak di-commit)
+bukti/

@@ -12,8 +12,8 @@ tiga kandidat langkah catur secara individual (TOPSIS). Setelah keempatnya seles
 Hanya butuh Python 3.9 atau lebih baru. Tidak ada paket yang perlu diinstal.
 
 ```bash
-cd "D:\adam kuliah\Semester 5\Information System Praktikum\UAS\SKAKMAT"
-python app.py
+cd SKAKMAT        # masuk ke folder hasil clone repo ini
+python app.py     # di Linux/macOS mungkin perlu: python3 app.py
 ```
 
 Buka http://127.0.0.1:8000 di browser. Berhenti dengan Ctrl+C.
@@ -71,6 +71,33 @@ sama persis, peringkat dari Kapten yang menentukan.
 
 Hasil mencerminkan kesepakatan kelompok, bukan jaminan langkah terbaik atau kemenangan. Sistem tidak
 menganalisis posisi secara otomatis; analisis dilakukan anggota lewat penilaian kriteria.
+
+## Tampilan (front end)
+
+Front end ada di `static/` dan hanya memakai HTML, CSS, dan JavaScript biasa (tanpa framework, tanpa
+build step). Perubahan pada pembaruan front end:
+
+- **Papan catur:** bidak memakai glyph solid untuk kedua warna; bidak putih diberi garis tepi tebal
+  agar terbaca di petak terang. Font simbol disebut eksplisit karena di sebagian sistem font ikon
+  (mis. Font Awesome) membuat bidak hitam tidak tampil. Papan tetap persegi di semua lebar layar.
+- **Penyegaran otomatis** tiap 15 detik, satu permintaan sekali jalan, berhenti saat tab tidak aktif
+  dan setelah konsensus dijalankan (hasil sudah final). Ada keterangan waktu pembaruan terakhir dan
+  tombol **Segarkan** manual. Setelah konsensus, perubahan dari Kapten (ulang putaran, kasus baru)
+  baru terlihat di akun lain setelah menekan Segarkan atau memuat ulang halaman.
+- **Sesi habis** kembali ke halaman masuk dengan pesan "Sesi berakhir, silakan masuk lagi."
+- **Status memuat** saat halaman pertama dibuka, dan tombol aksi langsung nonaktif dengan teks
+  "Mengirim…", "Menjalankan…", dan seterusnya selama permintaan berjalan (mencegah kirim ganda).
+- **Penilaian:** setiap opsi berlabel (mis. "5 – sangat baik"). Kriteria C5 (cost) ditandai jelas;
+  opsinya berbunyi "5 – risiko sangat besar". Di layar sempit (HP/tablet) tabel penilaian tampil
+  sebagai kartu per kandidat.
+- **Status penilaian** menampilkan siapa saja yang belum menilai; Panel Kapten menjelaskan kenapa
+  tombol konsensus belum aktif.
+- **Kasus baru:** FEN diperiksa di browser dengan pesan yang menunjuk letak kesalahan (server tetap
+  memeriksa ulang).
+- **Aksesibilitas:** tabel punya caption, `scope`, dan `aria-label`; pesan memakai `role="status"`
+  atau `role="alert"`; fokus keyboard terlihat; kontras warna memenuhi WCAG AA di mode terang dan gelap.
+
+Semua teks dari server tetap dimasukkan lewat `textContent`, tanpa skrip atau style inline (sesuai CSP).
 
 ## Struktur berkas
 
