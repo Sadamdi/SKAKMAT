@@ -8,30 +8,37 @@
 </head>
 <body>
 <header class="atas">
-  <div class="merek"><span class="logo">♚</span><div><strong>SKAKMAT</strong><small>Sistem Kolaborasi Analis untuk Keputusan Melangkah Antar Tim</small></div></div>
+  <div class="merek"><span class="logo" aria-hidden="true">♚&#xFE0E;</span><div><strong>SKAKMAT</strong><small>Sistem Kolaborasi Analis untuk Keputusan Melangkah Antar Tim</small></div></div>
   <div id="akun" class="akun sembunyi"><span id="namaAkun"></span><button id="btnKeluar" class="sekunder">Keluar</button></div>
 </header>
 
 <main>
+  <p id="viewMuat" class="kartu memuat" role="status">Memuat data…</p>
+
   <section id="viewLogin" class="kartu login sembunyi">
     <h1>Masuk</h1>
     <p class="catatan">Gunakan akun decision maker: Kapten, Analis 1, Analis 2, atau Analis 3.</p>
+    <p id="infoLogin" class="pesan sembunyi" role="status"></p>
     <form id="formLogin">
       <label>Nama pengguna<input id="inUser" autocomplete="username" required></label>
       <label>Kata sandi<input id="inSandi" type="password" autocomplete="current-password" required></label>
-      <button type="submit">Masuk</button>
+      <button id="btnMasuk" type="submit">Masuk</button>
       <p id="galatLogin" class="galat" role="alert"></p>
     </form>
   </section>
 
   <div id="viewApp" class="sembunyi">
     <div id="pesan" class="pesan sembunyi" role="status"></div>
+    <div class="segar">
+      <span id="infoSegar" class="catatan"></span>
+      <button id="btnSegar" type="button" class="sekunder kecil">Segarkan</button>
+    </div>
 
     <section class="kartu">
       <h2 id="judulKasus"></h2>
       <div class="papan-baris">
-        <div>
-          <div id="papan" class="papan" aria-label="Posisi papan catur"></div>
+        <div class="papan-wadah">
+          <div id="papan" class="papan" role="group" aria-label="Posisi papan catur"></div>
           <p id="giliran" class="catatan"></p>
         </div>
         <div class="info">
@@ -75,7 +82,7 @@
             <label>Kandidat 2<input id="kK2" maxlength="20" required></label>
             <label>Kandidat 3<input id="kK3" maxlength="20" required></label>
           </div>
-          <button type="submit">Simpan kasus (menghapus penilaian sebelumnya)</button>
+          <button id="btnSimpan" type="submit">Simpan kasus (menghapus penilaian sebelumnya)</button>
         </form>
       </details>
     </section>

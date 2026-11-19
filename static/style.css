@@ -4,6 +4,7 @@
   --teks: #26231f;
   --redup: #6b655b;
   --garis: #d9d3c6;
+  --garis-kuat: #8c8475;
   --aksen: #3f5a40;
   --aksen-teks: #ffffff;
   --papan-terang: #eadfc4;
@@ -14,7 +15,7 @@
 @media (prefers-color-scheme: dark) {
   :root {
     --latar: #1c1a17; --kartu: #26231f; --teks: #ece6d9; --redup: #a39b8c;
-    --garis: #3d382f; --aksen: #7fa57f; --aksen-teks: #14210f;
+    --garis: #3d382f; --garis-kuat: #857c6c; --aksen: #7fa57f; --aksen-teks: #14210f;
     --papan-terang: #cdbf9d; --papan-gelap: #6d563b; --galat: #e08a8a; --sorot: #34301f;
   }
 }
@@ -45,11 +46,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .pesan { padding: 10px 14px; border: 1px solid var(--garis); background: var(--sorot); border-radius: 4px; margin-bottom: 12px; }
 .pesan.galat { color: var(--galat); border-color: var(--galat); }
 .papan-baris { display: flex; gap: 24px; flex-wrap: wrap; }
-.papan { display: grid; grid-template-columns: repeat(8, 1fr); width: min(100%, 360px); aspect-ratio: 1; border: 2px solid var(--garis); }
-.petak { display: flex; align-items: center; justify-content: center; font-size: clamp(20px, 5.4vw, 34px); line-height: 1; }
+.papan-wadah { flex: 0 1 360px; min-width: 0; }
+/* Font simbol disebut eksplisit: sebagian font ikon (mis. Font Awesome) mengklaim kode bidak catur tapi glyph-nya kosong. */
+.logo, .petak { font-family: "DejaVu Sans", "Noto Sans Symbols 2", "Segoe UI Symbol", "Apple Symbols", "Arial Unicode MS", sans-serif;
+  font-variant-emoji: text; }
+.papan { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); grid-template-rows: repeat(8, minmax(0, 1fr));
+  width: 100%; max-width: 360px; aspect-ratio: 1; border: 2px solid var(--garis-kuat); container-type: inline-size; }
+.petak { display: flex; align-items: center; justify-content: center; overflow: hidden; line-height: 1;
+  font-size: 30px; font-size: 9.4cqi; }
 .petak.t { background: var(--papan-terang); } .petak.g { background: var(--papan-gelap); }
-.petak.putih { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000; }
-.petak.hitam { color: #111; }
+/* Bidak putih: isi putih dengan garis tepi gelap tebal (8 arah) supaya bentuknya jelas di petak terang. */
+.petak.putih { color: #fff; text-shadow: 1px 0 #000, -1px 0 #000, 0 1px #000, 0 -1px #000,
+  1px 1px #000, -1px -1px #000, 1px -1px #000, -1px 1px #000, 0 0 3px #000; }
+/* Bidak hitam: isi hitam dengan tepi terang tipis supaya tidak tenggelam di petak gelap. */
+.petak.hitam { color: #141414; text-shadow: 0 0 1px #fff, 0 0 2px rgba(255, 255, 255, .55); }
 .info { flex: 1; min-width: 240px; }
 .riwayat { font-family: "Courier New", monospace; font-size: 14px; background: var(--latar); padding: 8px 10px; border-radius: 4px; margin: 0; }
 .kandidat { margin: 4px 0; padding-left: 22px; font-family: "Courier New", monospace; }

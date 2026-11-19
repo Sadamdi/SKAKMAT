@@ -10,7 +10,9 @@ const el = (tag, kelas, teks) => {
 };
 const f = (x, k = 4) => Number(x).toFixed(k).replace(".", ",");
 
-const BIDAK = { K: "♔", Q: "♕", R: "♖", B: "♗", N: "♘", P: "♙", k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
+// Glyph solid untuk kedua warna; warna bidak dibedakan lewat CSS. U+FE0E memaksa tampilan teks, bukan emoji.
+const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
+const NAMA_BIDAK = { k: "raja", q: "menteri", r: "benteng", b: "gajah", n: "kuda", p: "pion" };
 let data = null;
 let tandaForm = "";
 
@@ -54,10 +56,15 @@ function gambarPapan(fen) {
 }
 function petak(r, c, ch) {
   const e = el("div", "petak " + ((r + c) % 2 === 0 ? "t" : "g"));
-  if (ch) {
-    e.textContent = BIDAK[ch] || "";
-    e.classList.add(ch === ch.toUpperCase() ? "putih" : "hitam");
-    e.setAttribute("aria-label", ch);
+  const kecil = ch.toLowerCase();
+  if (ch && GLYPH[kecil]) {
+    const putih = ch !== kecil;
+    e.textContent = GLYPH[kecil] + "\uFE0E";
+    e.classList.add(putih ? "putih" : "hitam");
+    e.setAttribute("role", "img");
+    e.setAttribute("aria-label", `${"abcdefgh"[c]}${8 - r}: ${NAMA_BIDAK[kecil]} ${putih ? "putih" : "hitam"}`);
+  } else {
+    e.setAttribute("aria-hidden", "true");
   }
   return e;
 }
