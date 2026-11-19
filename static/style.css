@@ -196,6 +196,12 @@ table.peringkat tr.total > * { font-weight: bold; border-top: 2px solid var(--ga
 /* Status kosong sengaja berbentuk kotak garis putus-putus tanpa angka, supaya tidak terbaca sebagai hasil. */
 .status-engine.kosong { margin: 8px 0; padding: 10px 14px; border: 1px dashed var(--garis-kuat); border-radius: 4px;
   color: var(--teks); font-size: 14px; }
+.status-engine { margin: 8px 0; padding: 10px 14px; border-radius: 4px; font-size: 15px; border: 1px solid var(--garis); }
+.status-engine.sepakat { border-left: 4px solid var(--aksen); background: var(--sorot); }
+.status-engine.beda { border-left: 4px solid var(--cost); background: var(--cost-latar); }
+#tabelEngine td.cocok { color: var(--aksen); font-weight: bold; }
+#tabelEngine td.tidak-cocok { color: var(--cost); font-weight: bold; }
+.usul { margin: 4px 0 0; }
 @media (max-width: 520px) {
   .batang { grid-template-columns: 1fr max-content; }
   .batang-nama { grid-column: 1 / -1; }

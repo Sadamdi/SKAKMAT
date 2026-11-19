@@ -409,8 +409,19 @@ function putarAnimasi() {
 }
 
 // ------------------------------------------------------------------ pembanding engine
-// Engine hanya pembanding, bukan kriteria. Selama server belum mengirim field `engine`,
-// tampilkan status jujur tanpa angka apa pun.
+// Engine hanya pembanding, bukan kriteria: nilainya tidak ikut TOPSIS maupun Borda.
+// Bila server tidak mengirim field `engine` atau engine tidak tersedia, tampilkan status jujur tanpa angka.
+const SELISIH_TIPIS = 20;   // centipawn (0,2 pion): di bawah ini dua langkah dianggap praktis setara
+
+// Nilai engine dari sudut pandang tim (pihak yang berjalan).
+function nilaiEngine(x) {
+  if (x.mat !== null && x.mat !== undefined) return x.mat > 0 ? `mat dalam ${x.mat}` : `dimat dalam ${-x.mat}`;
+  const pion = x.cp / 100;
+  return (pion > 0 ? "+" : pion < 0 ? "−" : "±") + Math.abs(pion).toFixed(2).replace(".", ",");
+}
+// Selisih dalam centipawn; null bila salah satu bernilai mat (tidak bisa dikurangkan secara bermakna).
+const selisihCp = (a, b) => (a.cp === null || b.cp === null ? null : Math.abs(a.cp - b.cp));
+
 function renderEngine() {
   const e = data && data.engine;
   const st = $("statusEngine");
@@ -421,7 +432,44 @@ function renderEngine() {
     st.textContent = "Pembanding engine belum tersedia. Server belum menyediakan peringkat engine, jadi belum ada yang dibandingkan.";
     return;
   }
-  st.textContent = "Pembanding engine tidak tersedia" + (e.alasan ? `: ${e.alasan}` : ".");
+  const k = data.konsensus;
+  if (!e.tersedia || !k || !Array.isArray(e.kandidat) || e.kandidat.length !== data.kasus.kandidat.length) {
+    st.textContent = "Pembanding engine tidak tersedia" + (e.tersedia ? ": data engine tidak lengkap." : e.alasan ? `: ${e.alasan}` : ".");
+    return;
+  }
+  const kandidat = data.kasus.kandidat;
+  const iKel = kandidat.indexOf(k.pemenang);
+  const kel = e.kandidat[iKel];
+  const terbaik = e.kandidat.filter((x) => x.peringkat === 1);
+  st.className = "status-engine " + (kel && kel.peringkat === 1 ? "sepakat" : "beda");
+  if (kel && kel.peringkat === 1) {
+    st.textContent = `Sepakat: langkah pilihan kelompok (${k.pemenang}) juga peringkat 1 menurut engine.`;
+  } else {
+    const d = kel && terbaik[0] ? selisihCp(kel, terbaik[0]) : null;
+    st.textContent = `Berbeda: kelompok memilih ${k.pemenang} (peringkat ${kel ? kel.peringkat : "?"} menurut engine), `
+      + `sedangkan engine paling menilai ${terbaik.map((x) => x.langkah).join(" / ")}.`
+      + (d === null ? "" : d <= SELISIH_TIPIS
+        ? ` Selisih nilainya hanya ${(d / 100).toFixed(2).replace(".", ",")} pion, praktis setara.`
+        : ` Selisih nilainya ${(d / 100).toFixed(2).replace(".", ",")} pion.`);
+  }
+  tabel($("tabelEngine"), "Peringkat kelompok dibandingkan peringkat engine",
+    ["Kandidat", "Peringkat kelompok (Borda)", "Peringkat engine", `Nilai engine (pion, sudut ${e.sudut_pandang || "tim"})`, "Perbandingan"],
+    kandidat.map((n, i) => {
+      const x = e.kandidat[i];
+      const sama = x.peringkat === k.borda.rank[i];
+      return [n, String(k.borda.rank[i]), String(x.peringkat), nilaiEngine(x), sama ? "= sama" : "≠ berbeda"];
+    }),
+    (i) => (k.borda.rank[i] === 1 ? "menang" : ""));
+  $("tabelEngine").querySelectorAll("tbody tr").forEach((tr) => {
+    const sel = tr.lastChild;
+    sel.className = sel.textContent.startsWith("=") ? "cocok" : "tidak-cocok";
+  });
+  $("wadahEngine").classList.remove("sembunyi");
+  const ket = $("ketEngine");
+  ket.textContent = `Engine hanya pembanding: nilainya tidak ikut dihitung dalam TOPSIS maupun Borda. `
+    + `Dianalisis ${e.engine || "engine"}${e.batas ? `, kedalaman ${e.batas.kedalaman}, maksimal ${String(e.batas.waktu_detik).replace(".", ",")} detik` : ""}. `
+    + "Nilai positif berarti menguntungkan tim; selisih kecil (di bawah 0,2 pion) praktis setara.";
+  ket.classList.remove("sembunyi");
 }
 
 // ------------------------------------------------------------------ pemuatan dan penyegaran
@@ -595,6 +643,27 @@ $("kFen").addEventListener("input", () => {
   $("kFen").removeAttribute("aria-invalid");
   $("galatKasus").textContent = "";
 });
+$("btnUsul").addEventListener("click", () => {
+  const salah = cekFen($("kFen").value);
+  $("infoUsul").textContent = "";
+  if (salah) {
+    $("galatKasus").textContent = "Isi FEN yang sah dulu. " + salah;
+    $("kFen").setAttribute("aria-invalid", "true");
+    $("kFen").focus();
+    return;
+  }
+  kirimDengan($("btnUsul"), "Meminta usulan…", async () => {
+    $("galatKasus").textContent = "";
+    try {
+      const j = await api("/api/usul-kandidat", { fen: $("kFen").value.trim() });
+      ["kK1", "kK2", "kK3"].forEach((id, i) => { $(id).value = j.kandidat[i]; });
+      $("infoUsul").textContent = "Kandidat diisi dari usulan engine (urut abjad, bukan peringkat engine). Boleh diubah sebelum disimpan.";
+    } catch (e) {
+      if (e.status === 401) tampilLogin(SESI_HABIS);
+      else $("galatKasus").textContent = e.message;
+    }
+  });
+});
 $("formKasus").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const salah = cekFen($("kFen").value);
@@ -607,19 +676,24 @@ $("formKasus").addEventListener("submit", (ev) => {
   kirimDengan($("btnSimpan"), "Menyimpan…", async () => {
     $("galatKasus").textContent = "";
     try {
-      await api("/api/kasus-baru", {
+      const j = await api("/api/kasus-baru", {
         judul: $("kJudul").value, fen: $("kFen").value, riwayat: $("kRiwayat").value,
         kandidat: [$("kK1").value, $("kK2").value, $("kK3").value],
       });
       $("formKasus").reset();
-      pesan("Kasus baru dibuat. Penilaian dimulai dari awal.", false, "pesanKapten");
+      $("infoUsul").textContent = "";
+      pesan("Kasus baru dibuat. Penilaian dimulai dari awal." + (j.peringatan ? ` ${j.peringatan}` : ""), false, "pesanKapten");
       await muat(true);
     } catch (e) {
-      if (e.status === 401) tampilLogin(SESI_HABIS);
-      else $("galatKasus").textContent = e.message;
+      if (e.status === 401) return tampilLogin(SESI_HABIS);
+      $("galatKasus").textContent = e.message;
+      // Pesan server "Kandidat N: ..." menunjuk kolom yang salah; tandai kolom itu.
+      const m = /^Kandidat (\d)/.exec(e.message);
+      if (m && $(`kK${m[1]}`)) { $(`kK${m[1]}`).setAttribute("aria-invalid", "true"); $(`kK${m[1]}`).focus(); }
     }
   });
 });
+["kK1", "kK2", "kK3"].forEach((id) => $(id).addEventListener("input", () => $(id).removeAttribute("aria-invalid")));
 
 // Penyegaran berkala agar status penilaian dan hasil konsensus muncul tanpa muat ulang halaman.
 // Dilewati bila: belum masuk, hasil sudah final, tab tidak aktif, permintaan/aksi masih berjalan,
