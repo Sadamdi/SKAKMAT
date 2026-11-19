@@ -5,3 +5,6 @@ skakmat.db
 
 # tangkapan layar verifikasi front end (tidak di-commit)
 bukti/
+
+# lingkungan Python lokal
+.venv/

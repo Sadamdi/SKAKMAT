@@ -4,7 +4,8 @@ GDSS berbasis website: empat decision maker (Kapten, Analis 1, 2, 3) menilai tig
 catur secara individual dengan TOPSIS, lalu akun Kapten (jabatan tertinggi) menjalankan konsensus
 voting Borda. Semua decision maker dapat melihat hasil konsensus.
 
-Hanya memakai pustaka standar Python (tanpa instalasi).
+Inti aplikasi hanya memakai pustaka standar Python. Validasi legalitas langkah dan pembanding engine
+(mesin.py) memakai python-chess + Stockfish bila terpasang; tanpa keduanya aplikasi tetap berjalan.
 
     python app.py                 # http://127.0.0.1:8000
     python app.py --port 8080 --host 0.0.0.0   # agar bisa dibuka dari perangkat lain di jaringan
@@ -24,6 +25,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import gdss
+import mesin
 
 BASE = Path(__file__).resolve().parent
 STATIC = BASE / "static"
@@ -259,6 +261,7 @@ class Penangan(BaseHTTPRequestHandler):
                     ("POST", "/api/konsensus"): self.post_konsensus,
                     ("POST", "/api/ulang"): self.post_ulang,
                     ("POST", "/api/kasus-baru"): self.post_kasus_baru,
+                    ("POST", "/api/usul-kandidat"): self.post_usul_kandidat,
                     ("POST", "/api/keluar"): self.post_keluar}
             fn = rute.get((metode, path))
             if not fn:
@@ -309,6 +312,11 @@ class Penangan(BaseHTTPRequestHandler):
         if konsensus:   # setelah konsensus, seluruh decision maker melihat penilaian individual semua anggota
             out["individual"] = [{"nama": i["nama"], "tingkat": i["tingkat"], "skor": i["skor"], "topsis": i["topsis"]}
                                  for i in ambil_hasil_individual(c, kasus["id"])]
+        # Pembanding engine (field tambahan). Ditahan sampai konsensus supaya penilaian anggota tidak
+        # terpengaruh nilai engine. Selalu berbentuk {"tersedia": bool, ...} dengan alasan bila tidak tersedia.
+        out["engine"] = (mesin.peringkat_kasus(kasus["fen"], kasus["kandidat"]) if konsensus else
+                         mesin.tidak_tersedia("menunggu_konsensus", "Peringkat engine ditampilkan setelah konsensus "
+                                              "dijalankan, supaya penilaian anggota tidak terpengaruh."))
         return self.kirim_json(out)
 
     def post_nilai(self, c, user):
@@ -353,9 +361,29 @@ class Penangan(BaseHTTPRequestHandler):
             return self.kesalahan(400, "Teks terlalu panjang.")
         if not fen_valid(fen.strip()):
             return self.kesalahan(400, "Format FEN tidak valid.")
+        # Tambahan: legalitas posisi dan kandidat langkah (bila python-chess terpasang).
+        pesan = mesin.validasi_kasus(fen.strip(), [x.strip() for x in kand])
+        if pesan:
+            return self.kesalahan(400, pesan)
         buat_kasus(c, {"judul": judul.strip(), "fen": fen.strip(), "riwayat": riwayat.strip(),
                        "kandidat": [x.strip() for x in kand]})
+        if not mesin.pustaka_ada():
+            return self.kirim_json({"ok": True, "peringatan": "Legalitas langkah tidak diperiksa: "
+                                    "pustaka python-chess tidak terpasang di server."})
         return self.kirim_json({"ok": True})
+
+    def post_usul_kandidat(self, c, user):
+        """Usulan tiga kandidat dari engine untuk FEN. Opsional; form manual tetap bisa dipakai."""
+        if user["tingkat"] != 1:
+            return self.kesalahan(403, "Hanya Kapten yang dapat meminta usulan kandidat.")
+        d = self.baca_json() or {}
+        fen = d.get("fen")
+        if not isinstance(fen, str) or not fen_valid(fen.strip()):
+            return self.kesalahan(400, "Format FEN tidak valid.")
+        kandidat, galat = mesin.usul_kandidat(fen.strip())
+        if galat:
+            return self.kesalahan(*galat)
+        return self.kirim_json({"ok": True, "kandidat": kandidat, "urutan": "abjad, bukan peringkat engine"})
 
 
 def main():
