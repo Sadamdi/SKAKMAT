@@ -8,3 +8,4 @@ bukti/
 
 # lingkungan Python lokal
 .venv/
+*.db.lama-*

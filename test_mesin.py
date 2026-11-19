@@ -13,7 +13,7 @@ import urllib.request
 from pathlib import Path
 
 import mesin
-from test_e2e import AKUN, NILAI, Klien, cek
+from test_e2e import AKUN, Klien, cek
 
 PORT = 8766
 BASE = f"http://127.0.0.1:{PORT}"
@@ -121,6 +121,7 @@ def chess_menteri():
     return chess.QUEEN
 
 
+
 def nyalakan(env_tambahan):
     tmp = tempfile.mkdtemp()
     env = dict(os.environ, SKAKMAT_DB=str(Path(tmp) / "uji.db"), **env_tambahan)
@@ -144,11 +145,16 @@ def masuk_semua():
     return klien
 
 
-def konsensus(klien):
-    for u in AKUN:
-        klien[u].minta("/api/nilai", {"skor": NILAI[u]})
-    st, j = klien["kapten"].minta("/api/konsensus", {})
-    return st, j
+USULAN = {"anggota1": "d2d4", "anggota2": "d2d3", "anggota3": "e1g1"}
+
+
+def satu_ronde(klien):
+    """Ketiga anggota mengusulkan; respons usulan terakhir (yang memicu penilaian) dikembalikan."""
+    for u in ("anggota1", "anggota2"):
+        klien[u].minta("/api/usul", {"langkah": USULAN[u]})
+    t = time.time()
+    st, j = klien["anggota3"].minta("/api/usul", {"langkah": USULAN["anggota3"]})
+    return st, j, time.time() - t
 
 
 def ganti_alamat():
@@ -168,91 +174,59 @@ def skenario(nama, env, isi):
 
 
 def engine_hidup(k):
-    st, j = k["analis1"].minta("/api/kasus")
-    cek(st == 200 and j["engine"]["tersedia"] is False and j["engine"]["kode"] == "menunggu_konsensus"
-        and j["engine"]["alasan"], "sebelum konsensus: engine ditahan dengan alasan")
-    st, j = konsensus(k)
-    cek(st == 200, "konsensus tetap berjalan seperti biasa")
+    st, j, d = satu_ronde(k)
+    cek(st == 200 and j["dinilai"], f"ronde dinilai otomatis dengan engine dalam {d:.2f} s")
+    kr = j["konsensus"]["kriteria"]
+    cek(kr["sumber"]["mode"] == "engine" and kr["sumber"]["kedalaman"] == mesin.KEDALAMAN_KRITERIA,
+        f"C1-C5 diukur dengan {kr['sumber']['engine']}, kedalaman {kr['sumber']['kedalaman']}")
+    cek(all(e and (e["cp"] is None) != (e["mat"] is None) for e in kr["engine"]), "tiap alternatif punya nilai pembanding engine: cp atau mat")
+    cek("Stockfish" in j["konsensus"]["lawan"]["sumber"], f"lawan dimainkan Stockfish: {j['konsensus']['lawan']}")
+    mesin._cache_kriteria.clear()
+    lokal = mesin.nilai_kriteria(AWAL_GIUOCO, [USULAN[u] for u in ("anggota1", "anggota2", "anggota3")])
+    cek([x["nilai"] for x in lokal["alternatif"]] == kr["nilai"], "nilai C1-C5 dari server = hitungan ulang di proses lain (deterministik)")
     t = time.time()
-    st, j = k["analis2"].minta("/api/kasus")
-    e = j["engine"]
-    cek(st == 200 and e["tersedia"] is True and len(e["kandidat"]) == 3, f"setelah konsensus: peringkat engine dikirim ({time.time() - t:.2f} s)")
-    cek(all(isinstance(x["peringkat"], int) and 1 <= x["peringkat"] <= 3 for x in e["kandidat"]), "peringkat engine bilangan 1..3")
-    cek(all((x["cp"] is None) != (x["mat"] is None) for x in e["kandidat"]), "tiap kandidat punya tepat satu nilai: cp atau mat")
-    cek([x["langkah"] for x in e["kandidat"]] == j["kasus"]["kandidat"], "urutan kandidat engine = urutan kasus")
-    cek(set(j) >= {"pengguna", "kasus", "kriteria", "status", "semua_sudah", "konsensus", "skor_saya", "topsis_saya", "individual"},
-        "field lama /api/kasus tetap ada")
-    print("      engine:", e["engine"], [(x["langkah"], x["cp"], x["mat"], x["peringkat"]) for x in e["kandidat"]])
-    t = time.time()
-    st, j2 = k["kapten"].minta("/api/kasus")
-    cek(j2["engine"] == e and time.time() - t < 1.0, "permintaan berikutnya memakai cache (hasil sama, cepat)")
-    # usulan kandidat
-    st, j = k["analis1"].minta("/api/usul-kandidat", {"fen": AWAL})
-    cek(st == 403, "analis tidak boleh meminta usulan kandidat")
-    st, j = k["kapten"].minta("/api/usul-kandidat", {"fen": "bukan fen"})
-    cek(st == 400 and j["galat"] == "Format FEN tidak valid.", "usulan: FEN rusak ditolak sebelum menyentuh engine")
-    st, j = k["kapten"].minta("/api/usul-kandidat", {"fen": "8/8/8/8/8/8/8/8 w - - 0 1"})
-    cek(st == 400 and "tidak ada raja" in j["galat"], f"usulan: posisi ilegal ditolak sebelum menyentuh engine: {j['galat']!r}")
-    t = time.time()
-    st, j = k["kapten"].minta("/api/usul-kandidat", {"fen": AWAL})
-    cek(st == 200 and len(j["kandidat"]) == 3 and j["kandidat"] == sorted(j["kandidat"]) and all(x.startswith("1. ") for x in j["kandidat"]),
-        f"usulan 3 kandidat urut abjad: {j.get('kandidat')} ({time.time() - t:.2f} s)")
-    cek(mesin.validasi_kasus(AWAL, j["kandidat"]) is None, "kandidat usulan lolos validasi legalitas")
-    st, j = k["kapten"].minta("/api/usul-kandidat", {"fen": "7k/8/8/8/8/8/8/K7 w - - 0 1"})
-    cek(st == 400 and "remis" in j["galat"], f"usulan: posisi remis (material kurang) ditolak: {j['galat']!r}")
-    # validasi legalitas di kasus-baru
-    st, j = k["kapten"].minta("/api/kasus-baru", {"judul": "x", "fen": AWAL, "riwayat": "", "kandidat": ["e4", "e5", "Nf3"]})
-    cek(st == 400 and "Kandidat 2" in j["galat"], f"kasus-baru: kandidat ilegal ditolak: {j['galat']!r}")
-    st, j = k["kapten"].minta("/api/kasus-baru", {"judul": "x", "fen": "bukan fen", "riwayat": "", "kandidat": ["a", "b", "c"]})
-    cek(st == 400 and j["galat"] == "Format FEN tidak valid.", "kasus-baru: pesan FEN rusak yang lama tidak berubah")
-    st, j = k["kapten"].minta("/api/kasus-baru", {"judul": "x", "fen": "8/8/8/8/8/8/8/8 w - - 0 1", "riwayat": "", "kandidat": ["a", "b", "c"]})
-    cek(st == 400 and "tidak ada raja" in j["galat"], "kasus-baru: posisi ilegal (bentuk benar) ditolak")
-    st, j = k["kapten"].minta("/api/kasus-baru", {"judul": "Sah", "fen": AWAL, "riwayat": "", "kandidat": ["e4", "d4", "Nf3"]})
-    cek(st == 200 and j == {"ok": True}, "kasus-baru: kandidat sah diterima, respons sama seperti dulu")
+    st, j2 = k["anggota1"].minta("/api/ronde")
+    cek(st == 200 and time.time() - t < 0.5, f"GET /api/ronde tidak memanggil engine ({time.time() - t:.3f} s)")
 
 
 def engine_mati(k):
-    st, j = konsensus(k)
-    cek(st == 200, "konsensus berjalan normal tanpa engine")
-    st, j = k["analis3"].minta("/api/kasus")
-    e = j["engine"]
-    cek(st == 200 and j["konsensus"] and len(j["individual"]) == 4, "hasil konsensus tetap lengkap tanpa engine")
-    cek(e["tersedia"] is False and e["kode"] == "engine_tidak_ada" and "Stockfish" in e["alasan"], f"penanda tidak tersedia + alasan: {e}")
-    cek("kandidat" not in e, "tidak ada angka engine palsu")
-    st, j = k["kapten"].minta("/api/usul-kandidat", {"fen": AWAL})
-    cek(st == 503 and "tidak tersedia" in j["galat"], f"usulan saat engine mati: 503 dengan pesan: {j['galat']!r}")
-    st, j = k["kapten"].minta("/api/kasus-baru", {"judul": "x", "fen": AWAL, "riwayat": "", "kandidat": ["e4", "e5", "Nf3"]})
+    st, j, d = satu_ronde(k)
+    kr = j["konsensus"]["kriteria"]
+    cek(st == 200 and j["dinilai"] and kr["sumber"]["mode"] == "statis", f"tanpa engine: ronde tetap dinilai, C2 statis ({d:.2f} s)")
+    cek("Stockfish" in kr["sumber"]["alasan_statis"], f"alasan ditampilkan: {kr['sumber']['alasan_statis']!r}")
+    cek(all(e is None for e in kr["engine"]), "tidak ada angka engine palsu")
+    cek("tanpa engine" in j["konsensus"]["lawan"]["sumber"], f"lawan memakai aturan sederhana: {j['konsensus']['lawan']}")
+    st, j = k["anggota1"].minta("/api/usul", {"langkah": "a1a5"})
     cek(st == 400, "validasi legalitas tetap jalan walau engine mati (cukup python-chess)")
 
 
 def engine_menggantung(k):
-    st, _ = konsensus(k)
     batas = mesin.WAKTU_START + mesin.WAKTU_ANTRE + 3
+    st, j, d = satu_ronde(k)
+    cek(st == 200 and j["dinilai"] and j["konsensus"]["kriteria"]["sumber"]["mode"] == "statis",
+        f"engine menggantung: ronde tetap dinilai (C2 statis) dalam {d:.1f} s")
+    cek(d < batas, f"tidak menggantung: selesai dalam {d:.1f} s (< {batas:.0f} s), engine tidak ditunggu dua kali")
+    st, j2 = k["anggota1"].minta("/api/ronde")
+    sah = [x["uci"] for x in j2["langkah_sah"]]
+    k["anggota1"].minta("/api/usul", {"langkah": sah[0]})
+    k["anggota2"].minta("/api/usul", {"langkah": sah[1]})
     t = time.time()
-    st, j = k["kapten"].minta("/api/kasus")
+    st, j = k["anggota3"].minta("/api/usul", {"langkah": sah[2]})
     d = time.time() - t
-    cek(st == 200 and j["engine"]["tersedia"] is False and j["engine"]["kode"] == "engine_gagal",
-        f"engine menggantung: /api/kasus tetap menjawab dengan penanda gagal ({d:.1f} s)")
-    cek(d < batas, f"tidak menggantung: selesai dalam {d:.1f} s (< {batas:.0f} s)")
-    t = time.time()
-    st, j = k["analis1"].minta("/api/kasus")
-    cek(j["engine"]["kode"] == "engine_gagal" and time.time() - t < 1.0,
-        f"kegagalan diingat sebentar: permintaan berikutnya tidak menunggu lagi ({time.time() - t:.2f} s)")
-    t = time.time()
-    st, j = k["kapten"].minta("/api/usul-kandidat", {"fen": AWAL})
-    d = time.time() - t
-    cek(st == 503 and d < batas, f"usulan saat engine menggantung: 503 dalam {d:.1f} s")
+    cek(st == 200 and j["dinilai"] and d < 1.5, f"kegagalan diingat sebentar: ronde 2 dinilai tanpa menunggu engine lagi ({d:.2f} s)")
 
 
 def tanpa_pustaka(k):
-    st, j = k["kapten"].minta("/api/kasus-baru", {"judul": "x", "fen": AWAL, "riwayat": "", "kandidat": ["e4", "e5", "Nf3"]})
-    cek(st == 200 and "peringatan" in j and "tidak diperiksa" in j["peringatan"],
-        "tanpa python-chess: kasus diterima seperti dulu, dengan peringatan legalitas tidak diperiksa")
-    st, j = k["kapten"].minta("/api/kasus-baru", {"judul": "x", "fen": "bukan fen", "riwayat": "", "kandidat": ["a", "b", "c"]})
-    cek(st == 400, "tanpa python-chess: pemeriksaan bentuk FEN lama tetap jalan")
-    st, j = konsensus(k)
-    st, j = k["analis1"].minta("/api/kasus")
-    cek(st == 200 and j["engine"]["kode"] == "pustaka_tidak_ada" and j["engine"]["alasan"], f"tanpa python-chess: {j['engine']}")
+    st, j = k["anggota1"].minta("/api/ronde")
+    cek(st == 200 and j["server"]["python_chess"] is False and j["langkah_sah"] == [],
+        "tanpa python-chess: papan tetap tampil, tanpa langkah yang bisa dimainkan")
+    st, j = k["anggota1"].minta("/api/usul", {"langkah": "d2d4"})
+    cek(st == 503 and "python-chess" in j["galat"], f"tanpa python-chess: usulan ditolak 503 dengan alasan: {j['galat']!r}")
+    st, j = k["anggota2"].minta("/api/konsensus", {})
+    cek(st == 409, "tanpa python-chess: tidak ada penilaian palsu")
+
+
+AWAL_GIUOCO = "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2P2N2/PP1P1PPP/RNBQK2R w KQkq - 4 5"
 
 
 def main():

@@ -1,14 +1,16 @@
-"""Validasi legalitas langkah dan pembanding engine (Stockfish) untuk SKAKMAT.
+"""Validasi langkah, pengukuran kriteria C1-C5, dan balasan lawan untuk SKAKMAT (python-chess + Stockfish).
 
-Engine di sini HANYA pembanding: hasilnya tidak masuk ke TOPSIS maupun Borda. Skala engine
-(centipawn) tidak sebanding dengan skala penilaian manusia 1 sampai 5, jadi tidak digabung.
+Engine di sini HANYA alat ukur: Stockfish dipakai untuk mengukur C2 (variasi utama sebelum material
+dihitung), sebagai angka pembanding yang ditampilkan, dan untuk memainkan langkah lawan. Engine tidak
+memilih langkah tim dan tidak menjadi kriteria TOPSIS. Pemilihan langkah tim tetap TOPSIS + Borda (gdss.py).
 
-Modul ini opsional. Bila pustaka python-chess atau program Stockfish tidak ada, aplikasi tetap
-berjalan seperti semula; fungsi di sini mengembalikan penanda "tidak tersedia" beserta alasannya.
+python-chess wajib untuk alur bermain (legalitas, posisi setelah langkah). Stockfish opsional: tanpa
+Stockfish, C2 dihitung secara statis dan lawan memakai aturan sederhana; hasil ditandai di respons.
 
 Lokasi Stockfish: variabel lingkungan SKAKMAT_STOCKFISH (path program), atau "stockfish" di PATH.
 SKAKMAT_STOCKFISH=mati mematikan engine dengan sengaja.
 """
+import math
 import os
 import re
 import shutil
@@ -23,16 +25,13 @@ except ImportError:      # python-chess belum dipasang: validasi legalitas & eng
 
 # Batas kerja engine. Setiap permintaan dibatasi kedalaman DAN waktu; proses engine juga punya
 # batas waktu sendiri untuk start dan untuk setiap perintah, jadi permintaan tidak bisa menggantung.
-KEDALAMAN = 16
 WAKTU_ANALISIS = 1.5      # detik, per analisis
 WAKTU_START = 5.0         # detik, menunggu engine siap
 WAKTU_ANTRE = 3.0         # detik, menunggu giliran bila engine sedang dipakai permintaan lain
-JUMLAH_USUL = 3
 
 _kunci = threading.Lock()     # satu proses engine sekaligus
-_cache = {}                   # (fen, kandidat...) -> hasil peringkat (hanya hasil yang deterministik)
-_gagal = {}                   # (fen, kandidat...) -> (waktu, hasil) kegagalan sementara, diingat sebentar
-JEDA_COBA_LAGI = 30.0         # detik sebelum engine yang gagal dicoba lagi untuk kasus yang sama
+_gagal = {"sampai": 0.0, "alasan": ""}   # engine yang baru gagal tidak dicoba lagi sampai waktu ini
+JEDA_COBA_LAGI = 30.0         # detik sebelum engine yang gagal dicoba lagi
 _NOMOR = re.compile(r"^\s*\d+\s*\.+\s*")
 
 
@@ -140,9 +139,12 @@ def _buka_engine():
     p = path_engine()
     if not p:
         raise EngineTidakTersedia("engine_tidak_ada", "Program Stockfish tidak ditemukan di server.")
+    if time.monotonic() < _gagal["sampai"]:
+        raise EngineTidakTersedia("engine_gagal", _gagal["alasan"] + " (dicoba lagi sebentar lagi)")
     try:
         e = chess.engine.SimpleEngine.popen_uci(p, timeout=WAKTU_START)
     except Exception:
+        _catat_gagal("Stockfish gagal dijalankan di server.")
         raise EngineTidakTersedia("engine_gagal", "Stockfish gagal dijalankan di server.")
     e.timeout = WAKTU_ANALISIS + 3.0       # batas tiap perintah ke engine
     try:
@@ -152,114 +154,29 @@ def _buka_engine():
     return e
 
 
-def _analisis(b, multipv, root_moves=None):
-    if not _kunci.acquire(timeout=WAKTU_ANTRE):
-        raise EngineTidakTersedia("engine_sibuk", "Engine sedang dipakai permintaan lain. Coba lagi sebentar.")
-    try:
-        e = _buka_engine()
-        try:
-            hasil = e.analyse(b, chess.engine.Limit(depth=KEDALAMAN, time=WAKTU_ANALISIS),
-                              multipv=multipv, root_moves=root_moves)
-            nama = e.id.get("name", "Stockfish")
-        except Exception:
-            raise EngineTidakTersedia("engine_gagal", "Engine gagal menganalisis atau melebihi batas waktu.")
-        finally:
-            try:
-                e.quit()
-            except Exception:
-                e.close()
-        return hasil, nama
-    finally:
-        _kunci.release()
+def mainkan(fen, uci):
+    """(fen setelah langkah, SAN langkah). Langkah harus sudah divalidasi."""
+    b = chess.Board(fen)
+    m = chess.Move.from_uci(uci)
+    san = b.san(m)
+    b.push(m)
+    return b.fen(), san
 
 
-def _skor(s):
-    """Skor dari sudut pandang pihak yang berjalan, dalam bentuk yang aman di-JSON-kan."""
-    if s.is_mate():
-        return {"cp": None, "mat": s.mate()}
-    return {"cp": s.score(), "mat": None}
-
-
-def peringkat_kasus(fen, kandidat):
-    """Peringkat engine untuk kandidat kasus. Selalu mengembalikan dict dengan kunci 'tersedia'."""
-    kunci = (fen, *kandidat)
-    if kunci in _cache:
-        return _cache[kunci]
-    if kunci in _gagal and time.monotonic() - _gagal[kunci][0] < JEDA_COBA_LAGI:
-        return _gagal[kunci][1]
-    if not pustaka_ada():
-        return tidak_tersedia("pustaka_tidak_ada", "Pustaka python-chess tidak terpasang di server.")
-    b, pesan = papan(fen)           # FEN diperiksa dulu; FEN tidak sah tidak pernah masuk ke engine
-    if pesan:
-        return _simpan(kunci, tidak_tersedia("posisi_tidak_sah", pesan + " Engine tidak dijalankan."))
-    langkah = []
-    for i, k in enumerate(kandidat, start=1):
-        m, pesan = baca_langkah(b, k)
-        if pesan:
-            return _simpan(kunci, tidak_tersedia("kandidat_tidak_sah", f"Kandidat {i}: {pesan} Engine tidak dijalankan."))
-        langkah.append(m)
-    if len(set(langkah)) != len(langkah):
-        return _simpan(kunci, tidak_tersedia("kandidat_tidak_sah", "Ada kandidat yang merupakan langkah sama. Engine tidak dijalankan."))
-    try:
-        info, nama = _analisis(b, multipv=len(langkah), root_moves=langkah)
-    except EngineTidakTersedia as e:
-        # Kegagalan sementara tidak disimpan permanen; diingat sebentar supaya engine yang macet
-        # tidak membuat setiap permintaan menunggu batas waktu lagi.
-        hasil = tidak_tersedia(e.kode, e.alasan)
-        if e.kode != "engine_sibuk":
-            _gagal[kunci] = (time.monotonic(), hasil)
-        return hasil
-    skor = {}
-    for baris in info:
-        if baris.get("pv") and "score" in baris:
-            skor[baris["pv"][0]] = baris["score"].pov(b.turn)
-    if set(skor) != set(langkah):
-        return tidak_tersedia("engine_gagal", "Engine tidak mengembalikan nilai untuk semua kandidat.")
-    # Peringkat kompetisi: nilai sama -> peringkat sama (1, 1, 3).
-    peringkat = [1 + sum(skor[x] > skor[m] for x in langkah) for m in langkah]
-    hasil = {
-        "tersedia": True,
-        "engine": nama,
-        "batas": {"kedalaman": KEDALAMAN, "waktu_detik": WAKTU_ANALISIS},
-        "sudut_pandang": "putih" if b.turn else "hitam",
-        "kandidat": [{"langkah": k, "san": b.san(m), **_skor(skor[m]), "peringkat": p}
-                     for k, m, p in zip(kandidat, langkah, peringkat)],
-    }
-    return _simpan(kunci, hasil)
-
-
-def _simpan(kunci, hasil):
-    if len(_cache) > 256:
-        _cache.clear()
-    _cache[kunci] = hasil
-    return hasil
-
-
-def usul_kandidat(fen):
-    """Tiga langkah teratas menurut engine, dalam format kandidat ('5. d4' / '5... Nf6').
-
-    Mengembalikan (daftar, None) atau (None, (status_http, pesan)). Urutan dikembalikan menurut abjad,
-    BUKAN menurut nilai engine, supaya usulan tidak membocorkan peringkat engine sebelum anggota menilai.
-    """
-    if not pustaka_ada():
-        return None, (503, "Usulan engine tidak tersedia: pustaka python-chess tidak terpasang di server.")
-    b, pesan = papan(fen)
-    if pesan:
-        return None, (400, pesan)
-    sah = list(b.legal_moves)
-    if b.is_game_over() or not sah:
-        return None, (400, "Posisi sudah selesai (skakmat atau remis); tidak ada langkah untuk diusulkan.")
-    if len(sah) < JUMLAH_USUL:
-        return None, (400, f"Posisi ini hanya punya {len(sah)} langkah sah; perlu {JUMLAH_USUL} kandidat.")
-    try:
-        info, nama = _analisis(b, multipv=JUMLAH_USUL)
-    except EngineTidakTersedia as e:
-        return None, (503, "Usulan engine tidak tersedia: " + e.alasan)
-    langkah = [baris["pv"][0] for baris in info if baris.get("pv")][:JUMLAH_USUL]
-    if len(langkah) < JUMLAH_USUL:
-        return None, (503, "Usulan engine tidak tersedia: engine mengembalikan kurang dari tiga langkah.")
-    awal = f"{b.fullmove_number}. " if b.turn else f"{b.fullmove_number}... "
-    return sorted(awal + b.san(m) for m in langkah), None
+def status_akhir(fen, tim):
+    """Keterangan bila permainan selesai di posisi fen, dari sudut pandang tim (True = putih), selain itu None."""
+    b = chess.Board(fen)
+    if b.is_checkmate():
+        return "Skakmat. Tim menang." if b.turn != tim else "Skakmat. Tim kalah."
+    if b.is_stalemate():
+        return "Remis: pat (tidak ada langkah sah, raja tidak diskak)."
+    if b.is_insufficient_material():
+        return "Remis: material tidak cukup untuk skakmat."
+    if b.is_seventyfive_moves():
+        return "Remis: aturan 75 langkah."
+    if b.is_fivefold_repetition():
+        return "Remis: posisi terulang lima kali."
+    return None
 
 
 # ------------------------------------------------------------------ kriteria C1-C5 otomatis
@@ -278,8 +195,6 @@ def usul_kandidat(fen):
 #   C4 peluang serangan : bidak lawan yang terserang + skak + mobilitas tim.
 #   C5 risiko balasan   : keuntungan tangkapan yang tersedia bagi lawan + langkah skak lawan (COST).
 # Engine HANYA mengukur (C2 dan pembanding nilai); engine tidak memilih langkah dan bukan kriteria ke-6.
-import math
-
 KEDALAMAN_KRITERIA = 12     # kedalaman Stockfish untuk variasi utama C2 (deterministik: 1 thread, hash dibersihkan)
 KEDALAMAN_LAWAN = 10        # kedalaman Stockfish saat memainkan balasan lawan
 PLY_MATERIAL = 4            # langkah variasi utama yang dimainkan sebelum material dihitung
@@ -512,6 +427,11 @@ def _rakit(sebelum, langkah, hasil, mode, nama=None, alasan=None):
     return {"tersedia": True, "sumber": sumber, "alternatif": hasil}
 
 
+def _catat_gagal(alasan):
+    """Kegagalan diingat sebentar supaya engine yang macet tidak membuat setiap permintaan menunggu lagi."""
+    _gagal.update(sampai=time.monotonic() + JEDA_COBA_LAGI, alasan=alasan)
+
+
 def _analisis_banyak(daftar_posisi, kedalaman):
     """Analisis beberapa posisi dalam satu proses engine. Tiap posisi diawali 'ucinewgame' (hash dikosongkan)
     dan dibatasi kedalaman, sehingga hasilnya deterministik. Batas waktu tetap ada sebagai pengaman."""
@@ -529,6 +449,7 @@ def _analisis_banyak(daftar_posisi, kedalaman):
                 out.append(e.analyse(b, chess.engine.Limit(depth=kedalaman, time=WAKTU_ANALISIS), game=object()))
             return out, e.id.get("name", "Stockfish")
         except Exception:
+            _catat_gagal("Engine gagal menganalisis atau melebihi batas waktu.")
             raise EngineTidakTersedia("engine_gagal", "Engine gagal menganalisis atau melebihi batas waktu.")
         finally:
             try:
@@ -562,6 +483,7 @@ def langkah_lawan(fen):
                     return hasil.move, f"{e.id.get('name', 'Stockfish')}, kedalaman {KEDALAMAN_LAWAN}"
             except Exception:
                 e_alasan = "Engine gagal memilih balasan."
+                _catat_gagal(e_alasan)
             finally:
                 try:
                     e.quit()
