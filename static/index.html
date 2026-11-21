@@ -3,13 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SKAKMAT - GDSS Langkah Catur</title>
+<title>SKAKMAT - Catur Konsultasi GDSS</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <header class="atas">
   <div class="merek"><span class="logo" aria-hidden="true">♚&#xFE0E;</span><div><strong>SKAKMAT</strong><small>Sistem Kolaborasi Analis untuk Keputusan Melangkah Antar Tim</small></div></div>
-  <div id="akun" class="akun sembunyi"><span id="lencanaAkun"></span><span id="namaAkun"></span><button id="btnKeluar" type="button" class="sekunder">Keluar</button></div>
+  <div id="akun" class="akun sembunyi"><span id="identitasAkun" class="nama-dm"></span><button id="btnKeluar" type="button" class="sekunder kecil">Keluar</button></div>
 </header>
 
 <main>
@@ -17,7 +18,7 @@
 
   <section id="viewLogin" class="kartu login sembunyi">
     <h1>Masuk</h1>
-    <p class="catatan">Gunakan akun decision maker: Kapten, Analis 1, Analis 2, atau Analis 3.</p>
+    <p class="catatan">Gunakan salah satu akun anggota tim: anggota1, anggota2, atau anggota3. Ketiganya setara; yang berbeda hanya gaya mainnya.</p>
     <p id="infoLogin" class="pesan" role="status"></p>
     <form id="formLogin">
       <label>Nama pengguna<input id="inUser" autocomplete="username" required></label>
@@ -28,88 +29,76 @@
   </section>
 
   <div id="viewApp" class="sembunyi">
-    <h1 class="sr">Ruang penilaian SKAKMAT</h1>
+    <h1 class="sr">Catur konsultasi SKAKMAT</h1>
     <div id="pesan" class="pesan" role="status"></div>
-    <div class="segar">
-      <span id="infoSegar" class="catatan"></span>
-      <button id="btnSegar" type="button" class="sekunder kecil">Segarkan</button>
-    </div>
 
-    <section class="kartu">
-      <h2 id="judulKasus"></h2>
-      <p id="tim" class="tim"></p>
-      <div class="papan-baris">
-        <div class="papan-wadah">
-          <div id="papan" class="papan" role="group" aria-label="Posisi papan catur"></div>
-          <p id="giliran" class="catatan"></p>
+    <section class="kartu ronde" aria-labelledby="judulRonde">
+      <div class="papan-kolom">
+        <div class="papan-kepala">
+          <h2 id="judulRonde"></h2>
+          <p id="giliran" class="giliran"></p>
         </div>
-        <div class="info">
-          <h3>Riwayat langkah</h3>
-          <p id="riwayat" class="riwayat"></p>
-          <h3>Kandidat langkah</h3>
-          <ol id="kandidat" class="kandidat"></ol>
-          <h3>Tim dan status penilaian</h3>
-          <p id="ringkasStatus" class="ringkas"></p>
-          <ul id="status" class="status"></ul>
+        <div id="papan" class="papan" role="group" aria-label="Papan catur" aria-describedby="petunjuk"></div>
+        <p id="pesanPapan" class="pesan-papan" role="status" aria-live="polite"></p>
+        <p id="petunjuk" class="catatan petunjuk">Pilih bidak putih, lalu pilih petak tujuan; bisa juga diseret. Dengan keyboard: Tab ke bidak, Enter untuk memilih, Tab ke petak tujuan, Enter untuk mengusulkan, Esc untuk batal.</p>
+      </div>
+
+      <aside class="panel" aria-label="Status ronde">
+        <p id="selesai" class="selesai sembunyi" role="status"></p>
+        <h3>Usulan Anda</h3>
+        <p id="usulanSaya" class="usulan-saya"></p>
+        <h3>Tim</h3>
+        <p id="ringkasStatus" class="ringkas" role="status"></p>
+        <ul id="status" class="status"></ul>
+        <p class="catatan">Usulan anggota lain baru terlihat setelah ketiganya masuk, supaya tiap usulan tetap independen. Setelah usulan ketiga masuk, penilaian berjalan otomatis.</p>
+        <h3>Riwayat langkah</h3>
+        <p id="riwayat" class="riwayat"></p>
+        <div class="aksi">
+          <button id="btnRondeBaru" type="button" class="sekunder" aria-describedby="ketRondeBaru">Ronde baru</button>
+          <button id="btnSegar" type="button" class="sekunder kecil">Segarkan</button>
         </div>
-      </div>
+        <p id="ketRondeBaru" class="catatan">Ronde baru memulai permainan lagi dari posisi awal. Riwayat permainan sebelumnya tetap tersimpan di server.</p>
+        <p id="infoSegar" class="catatan"></p>
+      </aside>
     </section>
 
-    <section id="kartuNilai" class="kartu">
-      <h2>Penilaian individual</h2>
-      <p class="catatan">Nilai tiap kandidat pada setiap kriteria dengan skala 1 (sangat buruk) sampai 5 (sangat baik). Penilaian dapat diubah sampai konsensus dijalankan.</p>
-      <p class="peringatan"><strong>Perhatian, C5 adalah kriteria cost.</strong> Pada C5 skalanya terbalik: nilai <strong>5</strong> berarti risiko serangan balik <strong>sangat besar</strong> (buruk), nilai <strong>1</strong> berarti risikonya sangat kecil (baik).</p>
-      <div class="gulir"><table id="tabelNilai" class="nilai"></table></div>
-      <div class="aksi"><button id="btnKirim" type="button">Kirim penilaian</button><span id="infoKirim" class="catatan"></span></div>
-      <p id="pesanNilai" class="pesan" role="status"></p>
-    </section>
-
-    <section id="kartuSaya" class="kartu sembunyi">
-      <h2>Hasil TOPSIS penilaian saya</h2>
-      <div class="gulir"><table id="tabelSaya"></table></div>
-    </section>
-
-    <section id="kartuKapten" class="kartu sembunyi">
-      <h2>Panel Kapten</h2>
-      <p class="catatan">Konsensus kelompok dijalankan oleh akun dengan jabatan tertinggi dengan metode voting Borda, setelah seluruh decision maker (termasuk Kapten) selesai menilai.</p>
-      <div class="aksi">
-        <button id="btnKonsensus" type="button" aria-describedby="infoKonsensus">Jalankan konsensus (Borda)</button>
-        <button id="btnUlang" type="button" class="sekunder">Ulangi putaran penilaian</button>
-      </div>
-      <p id="infoKonsensus" class="catatan"></p>
-      <p id="pesanKapten" class="pesan" role="status"></p>
-      <details class="baru">
-        <summary>Buat kasus baru</summary>
-        <form id="formKasus">
-          <label>Judul<input id="kJudul" maxlength="100" required></label>
-          <label>FEN posisi<input id="kFen" required spellcheck="false" autocapitalize="off" aria-describedby="ketFen galatKasus" placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"></label>
-          <p id="ketFen" class="catatan">8 baris dipisah "/", diikuti spasi dan giliran (w = putih, b = hitam).</p>
-          <p id="galatKasus" class="galat" role="alert"></p>
-          <label>Riwayat langkah<input id="kRiwayat" maxlength="500"></label>
-          <div class="aksi usul">
-            <button id="btnUsul" type="button" class="sekunder kecil" aria-describedby="infoUsul">Usulkan kandidat dari engine</button>
-            <span id="infoUsul" class="catatan" role="status"></span>
-          </div>
-          <div class="tiga">
-            <label>Kandidat 1<input id="kK1" maxlength="20" required></label>
-            <label>Kandidat 2<input id="kK2" maxlength="20" required></label>
-            <label>Kandidat 3<input id="kK3" maxlength="20" required></label>
-          </div>
-          <button id="btnSimpan" type="submit">Simpan kasus (menghapus penilaian sebelumnya)</button>
-        </form>
-      </details>
-    </section>
-
-    <section id="kartuHasil" class="kartu">
-      <h2>Hasil konsensus kelompok</h2>
-      <p id="belumKonsensus" class="catatan">Konsensus belum dijalankan. Hasil akan tampil di sini untuk seluruh decision maker.</p>
-      <div id="hasilKonsensus" class="sembunyi">
+    <section id="kartuHasil" class="kartu hasil" aria-labelledby="judulHasil">
+      <h2 id="judulHasil">Hasil penilaian</h2>
+      <p id="belumHasil" class="catatan">Belum ada ronde yang dinilai di permainan ini. Hasil muncul di sini otomatis setelah ketiga anggota mengusulkan langkah.</p>
+      <div id="isiHasil" class="sembunyi">
         <p id="pemenang" class="pemenang"></p>
+        <p id="banding" class="banding"></p>
+
+        <h3>1. Usulan anggota</h3>
+        <ul id="daftarUsulan" class="daftar-usulan"></ul>
+
+        <h3>2. Nilai kriteria C1–C5, diukur mesin</h3>
+        <p class="penanda-engine"><strong>Diukur mesin, bukan dipilih mesin.</strong> Nilai C1–C5 dihitung otomatis (python-chess dan Stockfish) dari posisi <em>setelah</em> tiap langkah, pada skala 1–5. Mesin hanya mengukur. Yang memilih langkah adalah TOPSIS menurut gaya tiap anggota, lalu voting Borda.</p>
+        <p id="sumberKriteria" class="catatan"></p>
+        <div class="gulir"><table id="tabelKriteria"></table></div>
+        <details class="rincian">
+          <summary>Rincian pengukuran tiap kriteria</summary>
+          <ul class="cara">
+            <li><strong>C1 Keamanan raja</strong> (benefit): pion pelindung di depan raja dikurangi jumlah serangan lawan ke petak di sekitar raja.</li>
+            <li><strong>C2 Keamanan material</strong> (benefit): perubahan selisih material setelah variasi utama Stockfish dimainkan, termasuk pertukaran yang belum selesai. Tanpa Stockfish: selisih material dikurangi ancaman tangkapan terbesar lawan.</li>
+            <li><strong>C3 Penguasaan pusat</strong> (benefit): serangan dan bidak tim di d4, e4, d5, e5 dikurangi milik lawan.</li>
+            <li><strong>C4 Peluang serangan</strong> (benefit): bidak lawan yang diserang, skak, dan mobilitas tim.</li>
+            <li><strong>C5 Risiko serangan balik</strong> (cost, makin besar makin buruk): tangkapan menguntungkan dan langkah skak yang tersedia bagi lawan.</li>
+          </ul>
+          <div class="gulir"><table id="tabelRincian"></table></div>
+        </details>
+
+        <h3>3. TOPSIS menurut gaya tiap anggota</h3>
+        <p class="catatan">Nilai C1–C5 sama untuk semua anggota. Yang berbeda adalah bobotnya: tiap gaya menekankan kriteria yang berbeda, sehingga peringkat ketiganya bisa berbeda.</p>
+        <div id="tigaTopsis" class="tiga-topsis"></div>
+
+        <h3>4. Konsensus kelompok: voting Borda</h3>
         <div class="gulir"><table id="tabelBorda"></table></div>
+        <p id="aturanSeri" class="catatan"></p>
 
         <section id="animasi" class="animasi" aria-labelledby="judulAnimasi">
           <div class="animasi-kepala">
-            <h3 id="judulAnimasi">Bagaimana peringkat individual digabung</h3>
+            <h4 id="judulAnimasi">Bagaimana tiga peringkat digabung</h4>
             <button id="btnPutar" type="button" class="sekunder kecil">Putar ulang</button>
           </div>
           <p id="ketAnimasi" class="catatan"></p>
@@ -119,14 +108,10 @@
         </section>
 
         <section id="pembanding" class="pembanding" aria-labelledby="judulPembanding">
-          <h3 id="judulPembanding">Peringkat kelompok vs peringkat engine</h3>
+          <h4 id="judulPembanding">Pembanding: penilaian engine sendiri</h4>
           <p id="statusEngine" class="status-engine" role="status"></p>
           <div id="wadahEngine" class="gulir sembunyi"><table id="tabelEngine"></table></div>
-          <p id="ketEngine" class="catatan sembunyi"></p>
         </section>
-
-        <h3>Penilaian individual seluruh decision maker</h3>
-        <div id="semuaIndividual"></div>
         <p class="catatan">Hasil ini mencerminkan kesepakatan kelompok, bukan jaminan langkah terbaik atau kemenangan.</p>
       </div>
     </section>

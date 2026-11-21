@@ -1,5 +1,6 @@
 "use strict";
 // Semua teks dari server dimasukkan lewat textContent, tidak pernah innerHTML.
+// Satu-satunya input pengguna di aplikasi ini adalah menggerakkan bidak di papan (selain login).
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, kelas, teks) => {
@@ -10,11 +11,11 @@ const el = (tag, kelas, teks) => {
 };
 const f = (x, k = 4) => Number(x).toFixed(k).replace(".", ",");
 
-// Glyph solid untuk kedua warna; warna bidak dibedakan lewat CSS. U+FE0E memaksa tampilan teks, bukan emoji.
 const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const NAMA_BIDAK = { k: "raja", q: "menteri", r: "benteng", b: "gajah", n: "kuda", p: "pion" };
+const BERKAS = "abcdefgh";
+const gerakDikurangi = matchMedia("(prefers-reduced-motion: reduce)");
 let data = null;
-let tandaForm = "";
 
 async function api(path, body, signal) {
   const opsi = body === undefined ? { signal } : {
@@ -37,42 +38,10 @@ async function api(path, body, signal) {
   return j;
 }
 
-// Wadah pesan selalu ada di DOM (role="status"/"alert"); bila kosong disembunyikan lewat CSS :empty.
 function pesan(teks, galat, id = "pesan") {
   const p = $(id);
   p.textContent = teks || "";
   p.classList.toggle("galat", !!galat);
-}
-
-function gambarPapan(fen) {
-  const papan = $("papan");
-  papan.replaceChildren();
-  const baris = fen.split(" ")[0].split("/");
-  baris.forEach((b, r) => {
-    let c = 0;
-    for (const ch of b) {
-      if (/\d/.test(ch)) {
-        for (let i = 0; i < Number(ch); i++) papan.append(petak(r, c++, ""));
-      } else {
-        papan.append(petak(r, c++, ch));
-      }
-    }
-  });
-  $("giliran").textContent = "Giliran: " + (fen.split(" ")[1] === "w" ? "putih" : "hitam");
-}
-function petak(r, c, ch) {
-  const e = el("div", "petak " + ((r + c) % 2 === 0 ? "t" : "g"));
-  const kecil = ch.toLowerCase();
-  if (ch && GLYPH[kecil]) {
-    const putih = ch !== kecil;
-    e.textContent = GLYPH[kecil] + "\uFE0E";
-    e.classList.add(putih ? "putih" : "hitam");
-    e.setAttribute("role", "img");
-    e.setAttribute("aria-label", `${"abcdefgh"[c]}${8 - r}: ${NAMA_BIDAK[kecil]} ${putih ? "putih" : "hitam"}`);
-  } else {
-    e.setAttribute("aria-hidden", "true");
-  }
-  return e;
 }
 
 // Tabel dengan caption (tersembunyi visual), scope kolom/baris, dan aria-label.
@@ -81,18 +50,20 @@ function tabel(t, judul, kepala, baris, kelasBaris) {
   t.setAttribute("aria-label", judul);
   t.append(el("caption", "sr", judul));
   const thead = el("thead");
-  const th = el("tr");
+  const tr0 = el("tr");
   kepala.forEach((h, i) => {
-    const c = el("th", i === 0 ? "kiri" : "", h);
+    const c = el("th", i === 0 ? "kiri" : "");
+    if (h instanceof Node) c.append(h); else c.textContent = h;
     c.scope = "col";
-    th.append(c);
+    tr0.append(c);
   });
-  thead.append(th);
+  thead.append(tr0);
   const tbody = el("tbody");
   baris.forEach((b, idx) => {
     const tr = el("tr", kelasBaris && kelasBaris(idx));
     b.forEach((v, i) => {
-      const c = el(i === 0 ? "th" : "td", i === 0 ? "kiri" : "", v);
+      const c = el(i === 0 ? "th" : "td", i === 0 ? "kiri" : "");
+      if (v instanceof Node) c.append(v); else c.textContent = v;
       if (i === 0) c.scope = "row";
       tr.append(c);
     });
@@ -101,205 +72,496 @@ function tabel(t, judul, kepala, baris, kelasBaris) {
   t.append(thead, tbody);
 }
 
-// Label skala 1..5; untuk kriteria cost nilai besar berarti risiko besar (buruk).
-const SKALA = {
-  benefit: ["sangat buruk", "buruk", "cukup", "baik", "sangat baik"],
-  cost: ["risiko sangat kecil", "risiko kecil", "risiko sedang", "risiko besar", "risiko sangat besar"],
-};
-const KET_COST = "cost: makin besar makin berisiko";
-
-function formNilai() {
-  const t = $("tabelNilai");
-  const judul = "Formulir penilaian kandidat langkah pada lima kriteria, skala 1 sampai 5";
-  t.replaceChildren();
-  t.setAttribute("aria-label", judul);
-  t.append(el("caption", "sr", judul));
-  const kep = el("tr");
-  const thK = el("th", "kiri", "Kandidat");
-  thK.scope = "col";
-  kep.append(thK);
-  data.kriteria.forEach((k) => {
-    const cost = k.jenis === "cost";
-    const th = el("th", cost ? "cost" : "");
-    th.scope = "col";
-    th.append(el("span", "kode", `${k.kode} ${k.nama}`));
-    th.append(el("span", "bobot", `bobot ${k.bobot}% · ${cost ? KET_COST : "benefit"}`));
-    kep.append(th);
-  });
-  const thead = el("thead");
-  thead.append(kep);
-  const tbody = el("tbody");
-  data.kasus.kandidat.forEach((nama, i) => {
-    const tr = el("tr");
-    const thNama = el("th", "kiri", nama);
-    thNama.scope = "row";
-    tr.append(thNama);
-    data.kriteria.forEach((k, j) => {
-      const cost = k.jenis === "cost";
-      const td = el("td", cost ? "cost" : "");
-      // data-label dipakai CSS untuk tampilan kartu di layar sempit.
-      td.dataset.label = `${k.kode} ${k.nama}${cost ? ` (${KET_COST})` : ""}`;
-      const s = el("select");
-      s.id = `n_${i}_${j}`;
-      s.setAttribute("aria-label", `${nama}, ${k.kode} ${k.nama}${cost ? `, ${KET_COST}` : ""}`);
-      SKALA[cost ? "cost" : "benefit"].forEach((ket, v) => s.append(new Option(`${v + 1} – ${ket}`, String(v + 1))));
-      s.value = data.skor_saya ? String(data.skor_saya[i][j]) : "3";
-      s.disabled = !!data.konsensus;
-      td.append(s);
-      tr.append(td);
-    });
-    tbody.append(tr);
-  });
-  t.append(thead, tbody);
-  infoKirim(false);
-}
-
-function infoKirim(berubah) {
-  $("infoKirim").textContent = data.konsensus ? "Penilaian dikunci karena konsensus sudah dijalankan."
-    : berubah ? "Ada perubahan yang belum dikirim."
-      : (data.skor_saya ? "Anda sudah mengirim penilaian." : "Anda belum mengirim penilaian.");
-}
-
-function tabelTopsis(t, judul, hasil, kandidat) {
-  tabel(t, judul, ["Kandidat", "D+", "D−", "Skor preferensi (V)", "Peringkat"],
-    kandidat.map((n, i) => [n, f(hasil.d_plus[i]), f(hasil.d_min[i]), f(hasil.v[i]), String(hasil.rank[i])]),
-    (i) => (hasil.rank[i] === 1 ? "menang" : ""));
-}
-
-// Status tombol dihitung terpisah dari render agar bisa dipulihkan setelah permintaan selesai.
-function aturTombol() {
-  if (!data) return;
-  $("btnKirim").disabled = !!data.konsensus;
-  $("btnKonsensus").disabled = !data.semua_sudah || !!data.konsensus;
-}
-
-// ------------------------------------------------------------------ identitas decision maker
-// Setiap decision maker mendapat warna aksen + inisial yang sama di seluruh halaman.
-// Kunci = tingkat jabatan (ada di status, individual, dan pengguna). Jumlah orang tidak di-hardcode:
-// urutan diambil dari data.status, warna berputar bila lebih dari empat.
+// ------------------------------------------------------------------ identitas anggota
+// Warna + inisial yang sama di seluruh halaman. Urutan = urutan peserta dari server; jumlah tidak di-hardcode.
 const JUMLAH_WARNA = 4;
 function inisial(nama) {
   return String(nama).trim().split(/\s+/).map((w) => (/^\d+$/.test(w) ? w : w.charAt(0).toUpperCase())).join("").slice(0, 3);
 }
-function identitas(orang) {
-  const urut = data.status.findIndex((s) => s.tingkat === orang.tingkat);
-  const i = urut < 0 ? 0 : urut;
-  return { kelas: `dm-${(i % JUMLAH_WARNA) + 1}`, inisial: inisial(orang.nama), koordinator: orang.tingkat === 1 };
+function orangDenganId(id) {
+  return (data.peserta || []).find((p) => p.id === id) || { id, nama: `Anggota #${id}`, gaya: "", gaya_nama: "" };
 }
-// Lencana: lingkaran berwarna (koordinator: kotak membulat) berisi inisial. Dekoratif bagi pembaca layar
-// karena nama selalu ditulis di sebelahnya.
+function kelasDm(id) {
+  const i = (data.peserta || []).findIndex((p) => p.id === id);
+  return `dm-${((i < 0 ? 0 : i) % JUMLAH_WARNA) + 1}`;
+}
 function lencana(orang) {
-  const id = identitas(orang);
-  const e = el("span", `lencana ${id.kelas}${id.koordinator ? " koord" : ""}`, id.inisial);
-  e.setAttribute("aria-hidden", "true");
+  const e = el("span", `lencana ${kelasDm(orang.id)}`, inisial(orang.nama));
+  e.setAttribute("aria-hidden", "true");   // nama selalu ditulis di sebelahnya
   return e;
 }
-function tagPeran(orang) {
-  return orang.tingkat === 1 ? el("span", "tag-peran", "koordinator") : null;
-}
-// Lencana + nama (+ tag koordinator) sebagai satu kesatuan.
-function namaDm(orang, tambahan = "") {
-  const w = el("span", `nama-dm ${identitas(orang).kelas}`);
+// Lencana + nama + gaya. Gaya ditulis sebagai teks, jadi pembedanya tidak hanya warna.
+function namaDm(orang, tambahan = "", denganGaya = true) {
+  const w = el("span", `nama-dm ${kelasDm(orang.id)}`);
   w.append(lencana(orang), el("span", "", orang.nama + tambahan));
-  const t = tagPeran(orang);
-  if (t) w.append(t);
+  if (denganGaya && orang.gaya_nama) w.append(el("span", "tag-gaya", orang.gaya_nama));
   return w;
 }
 
-function renderStatus() {
-  const st = $("status");
-  st.replaceChildren();
-  data.status.forEach((s) => {
-    const li = el("li", identitas(s).kelas);
-    li.append(namaDm(s, s.id === data.pengguna.id ? " (Anda · perangkat ini)" : ""));
-    li.append(el("span", s.sudah ? "ok" : "tunggu", s.sudah ? "✓ sudah menilai" : "○ belum menilai"));
-    st.append(li);
+// ------------------------------------------------------------------ papan
+let pilih = null;          // petak bidak yang sedang dipilih, mis. "e2"
+let gerak = {};            // petak asal -> [{ke, uci, san}] langkah sah ronde ini
+let interaktif = false;
+let mengirim = false;
+let tandaPapan = "";
+let tampilan = null;       // {fen, sorot} yang sedang digambar (berubah saat animasi papan)
+
+function isiFen(fen) {
+  const out = {};
+  fen.split(" ")[0].split("/").forEach((b, r) => {
+    let c = 0;
+    for (const ch of b) {
+      if (/\d/.test(ch)) c += Number(ch);
+      else { out[BERKAS[c] + (8 - r)] = ch; c++; }
+    }
   });
-  const belumOrang = data.status.filter((s) => !s.sudah);
-  const belum = belumOrang.map((s) => s.nama);
-  const rs = $("ringkasStatus");
-  if (data.konsensus) rs.textContent = "Konsensus sudah dijalankan; penilaian dikunci.";
-  else if (belum.length) {
-    rs.replaceChildren("Menunggu penilaian dari: ");
-    belumOrang.forEach((s, i) => {
-      if (i) rs.append(", ");
-      rs.append(namaDm(s));
-    });
-    rs.append(".");
-  } else rs.textContent = `Semua ${data.status.length} decision maker sudah menilai.`;
-  rs.classList.toggle("tunggu-kotak", !data.konsensus && belum.length > 0);
-  $("infoKonsensus").textContent = data.konsensus ? "Konsensus untuk kasus ini sudah dijalankan."
-    : belum.length ? `Tombol konsensus aktif setelah semua menilai. Belum menilai: ${belum.join(", ")}.`
-      : "Semua sudah menilai. Konsensus siap dijalankan.";
+  return out;
+}
+const timPutih = () => data.kasus.sisi_tim === "putih";
+const namaBidak = (ch) => `${NAMA_BIDAK[ch.toLowerCase()]} ${ch === ch.toUpperCase() ? "putih" : "hitam"}`;
+
+// Elemen dekoratif: label petak sudah menyebut koordinat, jadi disembunyikan dari pembaca layar.
+function hiasan(kelas, teks) {
+  const e = el("span", kelas, teks);
+  e.setAttribute("aria-hidden", "true");
+  return e;
 }
 
-function render() {
-  const { pengguna, kasus } = data;
-  $("namaAkun").textContent = `${pengguna.nama}${pengguna.tingkat === 1 ? " (koordinator)" : ""}`;
-  $("lencanaAkun").replaceChildren(lencana(pengguna));
-  $("judulKasus").textContent = kasus.judul;
-  // Satu tim, satu sisi papan: sisi tim = pihak yang berjalan menurut FEN.
-  const sisi = kasus.fen.split(" ")[1] === "w" ? "putih" : "hitam";
-  $("tim").textContent = `Satu tim memainkan bidak ${sisi}. ${data.status.length} decision maker menilai dari perangkat masing-masing; `
-    + "Kapten ikut menilai dan menjadi koordinator yang menjalankan konsensus.";
-  gambarPapan(kasus.fen);
-  $("riwayat").textContent = kasus.riwayat || "(belum ada langkah)";
-  const ol = $("kandidat");
-  ol.replaceChildren();
-  kasus.kandidat.forEach((k) => ol.append(el("li", "", k)));
-  renderStatus();
-  // Form nilai hanya digambar ulang bila kasus, penilaian tersimpan, atau status konsensus berubah,
-  // supaya pilihan yang belum dikirim tidak tertimpa oleh penyegaran berkala.
-  const tanda = JSON.stringify([kasus.id, data.skor_saya, !!data.konsensus]);
-  if (tanda !== tandaForm) { formNilai(); tandaForm = tanda; }
-
-  const saya = !!data.topsis_saya;
-  $("kartuSaya").classList.toggle("sembunyi", !saya);
-  if (saya) tabelTopsis($("tabelSaya"), "Hasil TOPSIS penilaian Anda", data.topsis_saya, kasus.kandidat);
-
-  const kapten = pengguna.tingkat === 1;
-  $("kartuKapten").classList.toggle("sembunyi", !kapten);
-  aturTombol();
-
-  const k = data.konsensus;
-  $("belumKonsensus").classList.toggle("sembunyi", !!k);
-  $("hasilKonsensus").classList.toggle("sembunyi", !k);
-  if (k) {
-    const p = $("pemenang");
-    p.replaceChildren("Langkah terpilih: ", el("strong", "", k.pemenang), ` (dijalankan oleh ${k.dijalankan_oleh})`);
-    const b = k.borda;
-    tabel($("tabelBorda"), "Hasil voting Borda kelompok", ["Kandidat", "Poin Borda", "Nilai Borda", "Peringkat"],
-      kasus.kandidat.map((n, i) => [n, f(b.poin[i]), f(b.nilai[i]), String(b.rank[i])]),
-      (i) => (b.rank[i] === 1 ? "menang" : ""));
-    const wadah = $("semuaIndividual");
-    wadah.replaceChildren();
-    (data.individual || []).forEach((ind) => {
-      const blok = el("div", `blok-individual ${identitas(ind).kelas}`);
-      const h = el("h4");
-      h.append(namaDm(ind));
-      blok.append(h);
-      const t = el("table");
-      tabelTopsis(t, `Hasil TOPSIS ${ind.nama}`, ind.topsis, kasus.kandidat);
-      const gulir = el("div", "gulir");
-      gulir.append(t);
-      blok.append(gulir);
-      wadah.append(blok);
-    });
-    renderAnimasi(k);
-  } else {
-    hentikanAnimasi();
-    tandaAnimasi = "";
+// Gambar papan untuk fen. sorot: {terakhir: [petak...], usul: {petak: kelasDm}, tanda: {petak: [orang...]}}
+function gambarPapan(fen, sorot = {}) {
+  tampilan = { fen, sorot };
+  const papan = $("papan");
+  const fokusSq = papan.contains(document.activeElement) ? document.activeElement.dataset.sq : null;
+  papan.replaceChildren();
+  const isi = isiFen(fen);
+  const putihBawah = timPutih();
+  for (let r = 0; r < 8; r++) {
+    for (let c = 0; c < 8; c++) {
+      const berkas = putihBawah ? c : 7 - c;
+      const baris = putihBawah ? 8 - r : r + 1;
+      const sq = BERKAS[berkas] + baris;
+      const b = el("button", "petak " + ((berkas + baris) % 2 === 1 ? "g" : "t"));
+      b.type = "button";
+      b.dataset.sq = sq;
+      b.tabIndex = -1;
+      const ch = isi[sq];
+      if (ch) {
+        const putih = ch === ch.toUpperCase();
+        const s = el("span", "bidak " + (putih ? "putih" : "hitam"), GLYPH[ch.toLowerCase()] + "︎");
+        s.setAttribute("aria-hidden", "true");
+        b.append(s);
+        b.dataset.warna = putih ? "w" : "b";
+      }
+      if (r === 7) b.append(hiasan("koord berkas", BERKAS[berkas]));
+      if (c === 0) b.append(hiasan("koord baris", String(baris)));
+      if ((sorot.terakhir || []).includes(sq)) b.classList.add("terakhir");
+      if (sorot.usul && sorot.usul[sq]) b.classList.add("usul", sorot.usul[sq]);
+      const tanda = sorot.tanda && sorot.tanda[sq];
+      if (tanda) {
+        const w = el("span", "tanda-usul");
+        tanda.forEach((o) => w.append(lencana(o)));
+        b.append(w);
+      }
+      papan.append(b);
+    }
   }
-  renderEngine();
+  perbaruiTanda();
+  if (fokusSq) {
+    const t = papan.querySelector(`[data-sq="${fokusSq}"]`);
+    if (t && t.tabIndex === 0) t.focus();
+  }
+}
+
+// Kelas dan label tiap petak sesuai keadaan pilihan. Hanya bidak yang bisa bergerak (dan, setelah
+// memilih, petak tujuannya) yang bisa dicapai dengan Tab.
+function perbaruiTanda() {
+  const isi = isiFen(tampilan.fen);
+  const tujuan = pilih && gerak[pilih] ? gerak[pilih] : [];
+  $("papan").querySelectorAll(".petak").forEach((b) => {
+    const sq = b.dataset.sq;
+    const bisa = interaktif && !!gerak[sq];
+    const t = tujuan.find((x) => x.ke === sq);
+    b.classList.toggle("bisa", bisa);
+    b.classList.toggle("dipilih", sq === pilih);
+    b.classList.toggle("tujuan", !!t);
+    b.classList.toggle("makan", !!t && !!isi[sq]);
+    b.tabIndex = bisa || t ? 0 : -1;
+    let label = `${sq}, ${isi[sq] ? namaBidak(isi[sq]) : "kosong"}`;
+    if (sq === pilih) label += ", dipilih. Pilih petak tujuan atau tekan Esc untuk batal";
+    else if (t) label += `, tujuan sah: ${t.san}`;
+    else if (bisa) label += ", dapat digerakkan";
+    if (b.classList.contains("terakhir")) label += ", langkah terakhir";
+    b.setAttribute("aria-label", label);
+    if (bisa) b.setAttribute("aria-pressed", String(sq === pilih)); else b.removeAttribute("aria-pressed");
+  });
+}
+
+function pesanPapan(teks, galat) {
+  const p = $("pesanPapan");
+  p.textContent = teks || "";
+  p.classList.toggle("galat", !!galat);
+}
+
+function batalPilih(teks, galat) {
+  const lama = pilih;
+  pilih = null;
+  perbaruiTanda();
+  if (lama) {   // bidak "kembali": fokus tetap di bidak asal
+    const b = $("papan").querySelector(`[data-sq="${lama}"]`);
+    if (b && document.activeElement && $("papan").contains(document.activeElement)) b.focus();
+  }
+  if (teks !== undefined) pesanPapan(teks, galat);
+}
+
+function klikPetak(sq, keyboard) {
+  if (!data || mengirim) return;
+  const isi = isiFen(tampilan.fen);
+  if (!interaktif) {
+    if (isi[sq]) pesanPapan(alasanTidakInteraktif(), false);
+    return;
+  }
+  if (!pilih) {
+    if (gerak[sq]) {
+      pilih = sq;
+      perbaruiTanda();
+      pesanPapan(`${namaBidak(isi[sq])} di ${sq} dipilih. Pilih petak tujuan (${gerak[sq].length} pilihan).`);
+      if (keyboard) {
+        const t = $("papan").querySelector(".petak.tujuan");
+        if (t) t.focus();
+      }
+    } else if (isi[sq] && (isi[sq] === isi[sq].toUpperCase()) === timPutih()) {
+      pesanPapan(`${namaBidak(isi[sq])} di ${sq} tidak punya langkah sah saat ini.`, true);
+    } else if (isi[sq]) {
+      pesanPapan(`Hanya bidak ${data.kasus.sisi_tim} (tim Anda) yang bisa digerakkan.`, true);
+    }
+    return;
+  }
+  if (sq === pilih) return batalPilih("Pilihan dibatalkan.");
+  if (gerak[sq]) {   // ganti ke bidak lain milik tim
+    pilih = null;
+    return klikPetak(sq, keyboard);
+  }
+  const t = gerak[pilih].find((x) => x.ke === sq);
+  if (!t) return batalPilih(`Langkah tidak sah: ${namaBidak(isi[pilih])} di ${pilih} tidak bisa ke ${sq}. Bidak kembali ke tempatnya.`, true);
+  kirimUsulan(t);
+}
+
+function alasanTidakInteraktif() {
+  if (!data.server.python_chess) return "Server tidak bisa memeriksa langkah (python-chess tidak terpasang), jadi papan hanya bisa dilihat.";
+  if (data.kasus.selesai || (data.konsensus && data.konsensus.akhir)) return "Permainan sudah selesai. Tekan Ronde baru untuk bermain lagi.";
+  if (animasiPapanJalan) return "Sedang memperlihatkan langkah ronde sebelumnya…";
+  return "Ronde ini sedang dinilai.";
+}
+
+async function kirimUsulan(t) {
+  mengirim = true;
+  $("papan").classList.add("sibuk");
+  $("papan").setAttribute("aria-busy", "true");
+  pesanPapan(`Mengirim usulan ${t.san}…`);
+  try {
+    const j = await api("/api/usul", { langkah: t.uci });
+    pilih = null;
+    if (j.dinilai) {
+      pesanPapan(`Usulan ${j.usulan.san} terkirim. Usulan Anda yang terakhir; penilaian otomatis selesai.`);
+    } else if (j.galat_penilaian) {
+      pesanPapan(`Usulan ${j.usulan.san} tersimpan, tapi penilaian otomatis gagal: ${j.galat_penilaian}`, true);
+    } else {
+      pesanPapan(`Usulan ${j.usulan.san} terkirim. Masih bisa diganti dengan menggerakkan bidak lain sampai semua anggota mengusulkan.`);
+    }
+    await muat(true);
+  } catch (e) {
+    if (e.status === 401) return tampilLogin(SESI_HABIS);
+    batalPilih(`${e.message} Bidak kembali ke tempatnya.`, true);
+    await muat(true);
+  } finally {
+    mengirim = false;
+    $("papan").classList.remove("sibuk");
+    $("papan").removeAttribute("aria-busy");
+  }
+}
+
+// --- seret (pointer events: mouse, sentuh, pena). Klik-klik tetap jalan; seret hanya jalan pintas.
+let seret = null;
+let abaikanKlik = false;
+$("papan").addEventListener("pointerdown", (ev) => {
+  const b = ev.target.closest(".petak");
+  if (!b || !interaktif || mengirim || ev.button !== 0 || !gerak[b.dataset.sq]) return;
+  seret = { sq: b.dataset.sq, x: ev.clientX, y: ev.clientY, id: ev.pointerId, hantu: null, asal: b };
+});
+document.addEventListener("pointermove", (ev) => {
+  if (!seret || ev.pointerId !== seret.id) return;
+  if (!seret.hantu) {
+    if (Math.hypot(ev.clientX - seret.x, ev.clientY - seret.y) < 6) return;
+    if (pilih !== seret.sq) { pilih = seret.sq; perbaruiTanda(); }
+    const glyph = seret.asal.querySelector(".bidak");
+    const h = el("div", "hantu bidak " + (glyph.classList.contains("putih") ? "putih" : "hitam"), glyph.textContent);
+    h.style.fontSize = getComputedStyle(seret.asal).fontSize;
+    h.setAttribute("aria-hidden", "true");
+    document.body.append(h);
+    seret.hantu = h;
+    seret.asal.classList.add("diseret");
+  }
+  seret.hantu.style.left = ev.clientX + "px";
+  seret.hantu.style.top = ev.clientY + "px";
+});
+function akhiriSeret(ev, jatuhkan) {
+  if (!seret || ev.pointerId !== seret.id) return;
+  const s = seret;
+  seret = null;
+  if (!s.hantu) return;            // tidak bergeser: biarkan event click menangani
+  s.hantu.remove();
+  s.asal.classList.remove("diseret");
+  abaikanKlik = true;
+  setTimeout(() => { abaikanKlik = false; }, 0);
+  if (!jatuhkan) return batalPilih("Seret dibatalkan.");
+  const target = document.elementFromPoint(ev.clientX, ev.clientY);
+  const b = target && target.closest && target.closest("#papan .petak");
+  if (!b) return batalPilih("Bidak dilepas di luar papan. Bidak kembali ke tempatnya.", true);
+  if (b.dataset.sq === s.sq) return pesanPapan(`Bidak di ${s.sq} dipilih. Pilih petak tujuan.`);
+  klikPetak(b.dataset.sq, false);
+}
+document.addEventListener("pointerup", (ev) => akhiriSeret(ev, true));
+document.addEventListener("pointercancel", (ev) => akhiriSeret(ev, false));
+$("papan").addEventListener("click", (ev) => {
+  const b = ev.target.closest(".petak");
+  if (!b || abaikanKlik) return;
+  klikPetak(b.dataset.sq, ev.detail === 0);   // detail 0 = diaktifkan keyboard (Enter/Spasi)
+});
+$("papan").addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && pilih) { ev.preventDefault(); batalPilih("Pilihan dibatalkan."); }
+});
+
+// ------------------------------------------------------------------ keadaan ronde
+const uciKe = (u) => [u.slice(0, 2), u.slice(2, 4)];
+
+// Posisi yang ditampilkan: bila permainan selesai oleh langkah tim, ronde aktif sudah dinilai dan
+// papannya adalah posisi setelah langkah pemenang.
+function fenSekarang() {
+  return data.konsensus ? data.konsensus.fen_setelah : data.kasus.fen;
+}
+function sorotSekarang() {
+  const sorot = { usul: {} };
+  const h = data.hasil_terakhir;
+  if (h && !data.konsensus) {   // langkah terakhir: pilihan kelompok + balasan lawan
+    sorot.terakhir = [...uciKe(h.pemenang.uci), ...(h.lawan ? uciKe(h.lawan.uci) : [])];
+  } else if (h) {
+    sorot.terakhir = uciKe(h.pemenang.uci);
+  }
+  if (data.usulan_saya && !data.konsensus) {
+    uciKe(data.usulan_saya.uci).forEach((sq) => { sorot.usul[sq] = kelasDm(data.pengguna.id); });
+  }
+  return sorot;
+}
+
+function renderRonde() {
+  const { kasus, pengguna } = data;
+  $("identitasAkun").replaceChildren(...namaDm(orangDenganId(pengguna.id)).childNodes);
+  $("identitasAkun").className = `nama-dm ${kelasDm(pengguna.id)}`;
+  $("judulRonde").textContent = `Permainan ${kasus.permainan} · Ronde ${kasus.nomor}`;
+  const akhir = kasus.selesai || (data.konsensus && data.konsensus.akhir);
+  $("giliran").textContent = akhir ? "Permainan selesai" : `Tim Anda: ${kasus.sisi_tim}, giliran melangkah`;
+  $("selesai").classList.toggle("sembunyi", !akhir);
+  $("selesai").textContent = akhir ? `${akhir} Tekan Ronde baru untuk bermain lagi dari posisi awal.` : "";
+  $("riwayat").textContent = data.konsensus
+    ? `${kasus.riwayat_teks} ${kasus.riwayat.length % 2 === 0 ? `${kasus.riwayat.length / 2 + 1}. ` : ""}${data.konsensus.pemenang.san}`
+    : kasus.riwayat_teks || "(belum ada langkah)";
+
+  // usulan sendiri
+  const us = $("usulanSaya");
+  if (akhir) us.textContent = "Tidak ada ronde yang berjalan.";
+  else if (data.usulan_saya) {
+    us.replaceChildren("Anda mengusulkan ", el("strong", "", data.usulan_saya.san),
+      data.semua_sudah ? "." : ". Bisa diganti dengan menggerakkan bidak lain sampai semua anggota mengusulkan.");
+  } else us.textContent = "Belum. Gerakkan satu bidak putih di papan untuk mengusulkan langkah.";
+
+  // status tim
+  const st = $("status");
+  st.replaceChildren();
+  data.peserta.forEach((p) => {
+    const li = el("li", kelasDm(p.id));
+    li.append(namaDm(p, p.id === pengguna.id ? " (Anda)" : ""));
+    li.append(el("span", p.sudah ? "ok" : "tunggu", p.sudah ? "✓ sudah mengusulkan" : "○ belum mengusulkan"));
+    st.append(li);
+  });
+  const belum = data.peserta.filter((p) => !p.sudah);
+  const rs = $("ringkasStatus");
+  if (akhir) rs.textContent = "Permainan selesai.";
+  else if (belum.length) {
+    rs.replaceChildren("Menunggu usulan dari: ");
+    belum.forEach((p, i) => { if (i) rs.append(", "); rs.append(namaDm(p, "", false)); });
+    rs.append(".");
+  } else rs.textContent = "Semua anggota sudah mengusulkan.";
+  rs.classList.toggle("tunggu-kotak", !akhir && belum.length > 0);
+
+  // papan: hanya digambar ulang bila ada yang berubah, supaya pilihan & fokus tidak hilang saat penyegaran
+  gerak = {};
+  (data.langkah_sah || []).forEach((m) => { (gerak[m.dari] = gerak[m.dari] || []).push(m); });
+  interaktif = data.langkah_sah.length > 0 && !animasiPapanJalan;
+  if (pilih && !gerak[pilih]) pilih = null;
+  const tanda = JSON.stringify([fenSekarang(), sorotSekarang(), interaktif]);
+  if (!animasiPapanJalan && tanda !== tandaPapan) {
+    tandaPapan = tanda;
+    gambarPapan(fenSekarang(), sorotSekarang());
+  } else if (!animasiPapanJalan) perbaruiTanda();
+  if (!data.server.python_chess) pesanPapan(alasanTidakInteraktif(), true);
+}
+
+// ------------------------------------------------------------------ animasi papan setelah penilaian
+// Bila hasil ronde baru masuk saat halaman terbuka: tampilkan usulan di posisi lama, lalu langkah
+// pemenang, lalu balasan lawan. Kurangi gerakan: langsung posisi akhir.
+let tandaHasilPapan = null;
+let animasiPapanJalan = false;
+let pewaktuPapan = [];
+const JEDA_PAPAN = 1300;
+
+function mungkinAnimasiPapan() {
+  const h = data.hasil_terakhir;
+  const id = h ? String(h.kasus_id) : "-";
+  const awal = tandaHasilPapan === null;
+  if (id === tandaHasilPapan) return;
+  tandaHasilPapan = id;
+  if (awal || !h) return;
+  pewaktuPapan.forEach(clearTimeout);
+  pewaktuPapan = [];
+  const ringkas = `Ronde ${h.nomor} dinilai: kelompok memainkan ${h.pemenang.san}` + (h.lawan ? `, lawan membalas ${h.lawan.san}.` : ".");
+  if (gerakDikurangi.matches) { pesanPapan(ringkas); return; }
+  animasiPapanJalan = true;
+  interaktif = false;
+  pilih = null;
+  const tanda = {};
+  h.alternatif.forEach((a) => {
+    const ke = uciKe(a.uci)[1];
+    tanda[ke] = (tanda[ke] || []).concat(a.pengusul.map(orangDenganId));
+  });
+  gambarPapan(h.fen_sebelum, { tanda });
+  pesanPapan(`Ronde ${h.nomor}: usulan ${h.alternatif.map((a) => a.san).join(", ")}.`);
+  pewaktuPapan.push(setTimeout(() => {
+    gambarPapan(h.fen_setelah, { terakhir: uciKe(h.pemenang.uci) });
+    pesanPapan(`Keputusan kelompok (Borda): ${h.pemenang.san}.`);
+  }, JEDA_PAPAN));
+  pewaktuPapan.push(setTimeout(() => {
+    animasiPapanJalan = false;
+    tandaPapan = "";
+    renderRonde();
+    pesanPapan(ringkas);
+  }, JEDA_PAPAN * (h.lawan ? 2 : 1)));
+}
+
+// ------------------------------------------------------------------ hasil penilaian
+let tandaHasil = "";
+
+function renderHasil() {
+  const h = data.hasil_terakhir;
+  $("belumHasil").classList.toggle("sembunyi", !!h);
+  $("isiHasil").classList.toggle("sembunyi", !h);
+  if (!h) { tandaHasil = ""; hentikanAnimasi(); return; }
+  const tanda = String(h.kasus_id);
+  if (tanda === tandaHasil) return;
+  tandaHasil = tanda;
+  const alt = h.alternatif;
+  const nama = alt.map((a) => a.san);
+  const b = h.borda;
+
+  $("judulHasil").textContent = `Hasil penilaian ronde ${h.nomor}`;
+  const p = $("pemenang");
+  p.replaceChildren("Langkah terpilih: ", el("strong", "", h.pemenang.san));
+  if (h.lawan) p.append(` · lawan membalas ${h.lawan.san}`);
+  if (h.akhir) p.append(` · ${h.akhir}`);
+  $("banding").textContent = kalimatBanding(h);
+  if (h.lawan) $("banding").append(el("span", "catatan", ` Langkah lawan dimainkan oleh ${h.lawan.sumber}.`));
+
+  // 1. usulan
+  const du = $("daftarUsulan");
+  du.replaceChildren();
+  alt.forEach((a) => a.pengusul.forEach((pid) => {
+    const li = el("li");
+    li.append(namaDm(orangDenganId(pid)), el("span", "langkah", a.san));
+    if (a.dukungan > 1) li.append(el("span", "dukungan", `usulan ganda: ${a.dukungan} orang`));
+    du.append(li);
+  }));
+
+  // 2. C1-C5
+  const kr = h.kriteria;
+  const sumber = kr.sumber;
+  $("sumberKriteria").textContent = sumber.mode === "engine"
+    ? `Diukur dengan ${sumber.engine}, kedalaman ${sumber.kedalaman}, dari sudut pandang tim ${sumber.sisi_tim}. Posisi yang sama selalu menghasilkan angka yang sama.`
+    : `Stockfish tidak tersedia (${sumber.alasan_statis || "tanpa alasan"}). C2 diukur secara statis; C1, C3, C4, C5 tetap dihitung dari papan.`;
+  const kepala = [el("span", "", "Alternatif")];
+  data.kriteria.forEach((k) => {
+    const s = el("span");
+    s.append(el("span", "kode", `${k.kode} ${k.nama}`), el("span", "ket", k.jenis === "cost" ? "cost: makin besar makin buruk" : "benefit"));
+    kepala.push(s);
+  });
+  tabel($("tabelKriteria"), "Nilai C1 sampai C5 tiap alternatif, skala 1 sampai 5, diukur mesin", kepala,
+    alt.map((a, i) => [`${a.san}${a.dukungan > 1 ? ` (${a.dukungan} usulan)` : ""}`, ...kr.nilai[i].map((v) => f(v, 2))]));
+  tandaiCost($("tabelKriteria"));
+  tabel($("tabelRincian"), "Ukuran mentah di balik nilai C1 sampai C5", ["Alternatif", "C1", "C2", "C3", "C4", "C5"],
+    alt.map((a, i) => [a.san, ...teksRincian(kr.rincian[i])]));
+  tandaiCost($("tabelRincian"));
+
+  // 3. TOPSIS per gaya
+  const wadah = $("tigaTopsis");
+  wadah.replaceChildren();
+  h.topsis.forEach((t) => {
+    const orang = { ...orangDenganId(t.pengguna_id), nama: t.nama, gaya_nama: t.gaya_nama };
+    const blok = el("section", `blok-topsis ${kelasDm(t.pengguna_id)}`);
+    const judul = el("h4");
+    judul.append(namaDm(orang));
+    blok.append(judul, el("p", "bobot", "Bobot " + data.kriteria.map((k, j) => `${k.kode} ${t.bobot[j]}`).join(" · ")));
+    const tb = el("table");
+    tabel(tb, `TOPSIS gaya ${t.gaya_nama} (${t.nama})`, ["Alternatif", "D+", "D−", "V", "Peringkat"],
+      alt.map((a, i) => [a.san, f(t.hasil.d_plus[i]), f(t.hasil.d_min[i]), f(t.hasil.v[i]), String(t.hasil.rank[i])]),
+      (i) => (t.hasil.rank[i] === 1 ? "menang" : ""));
+    const g = el("div", "gulir");
+    g.append(tb);
+    blok.append(g, el("p", "pilihan", `Pilihan gaya ${t.gaya_nama.toLowerCase()}: ${nama[t.hasil.rank.indexOf(1)]}`));
+    wadah.append(blok);
+  });
+
+  // 4. Borda
+  tabel($("tabelBorda"), "Hasil voting Borda kelompok", ["Alternatif", "Dukungan usulan", "Poin Borda", "Nilai Borda", "Peringkat"],
+    alt.map((a, i) => [a.san, String(a.dukungan), f(b.poin[i]), f(b.nilai[i]), String(b.rank[i])]),
+    (i) => (b.rank[i] === 1 ? "menang" : ""));
+  $("aturanSeri").textContent = `Bila nilai Borda sama, pemutusnya: ${b.aturan_seri}. Tidak ada akun yang suaranya lebih berat.`;
+  renderAnimasi(h);
+  renderEngine(h);
+}
+
+function tandaiCost(t) {
+  // kolom C5 (indeks 5) adalah cost: beri latar berbeda + keterangan di kepala, bukan hanya warna
+  t.querySelectorAll("tr").forEach((tr) => { if (tr.children[5]) tr.children[5].classList.add("cost"); });
+}
+
+function teksRincian(r) {
+  const c2 = r.C2.metode === "statis" ? "statis" : `${r.C2.ply} ply variasi engine`;
+  const tanda = (x) => (x > 0 ? `+${x}` : String(x));
+  return [
+    `${r.C1.perisai_pion} pion pelindung, ${r.C1.serangan_ke_zona_raja} serangan ke zona raja`,
+    `material ${tanda(r.C2.perubahan_material)} (${c2})`,
+    `kontrol pusat ${tanda(r.C3.kontrol_pusat_bersih)}`,
+    `${r.C4.bidak_lawan_terserang} bidak lawan diserang, mobilitas ${r.C4.mobilitas}${r.C4.memberi_skak ? ", skak" : ""}`,
+    `untung tangkapan lawan ${r.C5.untung_tangkapan_lawan}, ${r.C5.langkah_skak_lawan} langkah skak lawan`,
+  ];
+}
+
+// Kalimat yang menjelaskan peran Borda: siapa yang sepakat dengan keputusan kelompok, siapa tidak.
+function kalimatBanding(h) {
+  const nama = h.alternatif.map((a) => a.san);
+  const menang = h.borda.pemenang;
+  if (h.alternatif.length === 1) return `Suara bulat: ketiga anggota mengusulkan ${nama[0]}, jadi hanya ada satu alternatif.`;
+  const setuju = h.topsis.filter((t) => t.hasil.rank[menang] === 1);
+  const beda = h.topsis.filter((t) => t.hasil.rank[menang] !== 1);
+  const sebut = (ts) => ts.map((t) => `${t.nama} (${t.gaya_nama.toLowerCase()})`).join(", ");
+  if (!beda.length) return `Ketiga gaya sepakat: ${nama[menang]} peringkat 1 menurut TOPSIS setiap anggota.`;
+  return `Gaya tidak sepakat. ${nama[menang]} adalah pilihan ${setuju.length ? sebut(setuju) : "tidak satu pun gaya secara langsung"}; `
+    + beda.map((t) => `${t.nama} (${t.gaya_nama.toLowerCase()}) lebih memilih ${nama[t.hasil.rank.indexOf(1)]}`).join(", ")
+    + `. Borda menggabungkan ketiga peringkat dan memutuskan ${nama[menang]}.`;
 }
 
 // ------------------------------------------------------------------ animasi penggabungan Borda
-// Yang dianimasikan hanyalah penjumlahan: poin Borda tiap penilai (bobot peringkat × V) ditumpuk per
-// kandidat, satu penilai per langkah, lalu kandidat dengan total terbesar ditandai. Tidak ada analisis
-// posisi di sini. Hasil akhir (teks pemenang + tabel Borda di atas) sudah tampil sebelum animasi mulai.
-const JEDA_LANGKAH = 350;
-const gerakDikurangi = matchMedia("(prefers-reduced-motion: reduce)");
-let tandaAnimasi = "";
+// Yang dianimasikan hanyalah penjumlahan: poin Borda tiap anggota (bobot peringkat × V) ditumpuk per
+// alternatif, satu anggota per langkah. Hasil akhir sudah tertulis di tabel sebelum animasi mulai.
+const JEDA_LANGKAH = 450;
 let pewaktu = [];
 let modelAnimasi = null;
 
@@ -308,76 +570,61 @@ function hentikanAnimasi() {
   pewaktu = [];
 }
 
-// Hitung sumbangan poin tiap penilai dari data yang sudah dikirim server (rank, V, bobot Borda).
-// Bila jumlahnya tidak sama dengan poin Borda dari server, animasi tidak ditampilkan.
-function hitungSumbangan(k) {
-  const ind = data.individual || [];
-  const b = k.borda;
-  const n = data.kasus.kandidat.length;
-  if (!ind.length || !b.bobot_borda) return null;
-  const sumbangan = ind.map((o) => data.kasus.kandidat.map((_, i) => b.bobot_borda[o.topsis.rank[i] - 1] * o.topsis.v[i]));
-  for (let i = 0; i < n; i++) {
-    const total = sumbangan.reduce((a, s) => a + s[i], 0);
-    if (Math.abs(total - b.poin[i]) > 1e-9) return null;
+function hitungSumbangan(h) {
+  const b = h.borda;
+  const sumbangan = h.topsis.map((t) => h.alternatif.map((_, i) => b.bobot_borda[t.hasil.rank[i] - 1] * t.hasil.v[i]));
+  for (let i = 0; i < h.alternatif.length; i++) {
+    if (Math.abs(sumbangan.reduce((a, s) => a + s[i], 0) - b.poin[i]) > 1e-9) return null;
   }
-  return { ind, sumbangan, maks: Math.max(...b.poin) || 1 };
+  return { h, sumbangan, maks: Math.max(...b.poin) || 1 };
 }
 
-function renderAnimasi(k) {
-  const tanda = JSON.stringify([data.kasus.id, k.borda.poin]);
-  if (tanda === tandaAnimasi) return;
-  tandaAnimasi = tanda;
+function renderAnimasi(h) {
   hentikanAnimasi();
-  const m = hitungSumbangan(k);
+  const m = hitungSumbangan(h);
   modelAnimasi = m;
   $("animasi").classList.toggle("sembunyi", !m);
   if (!m) return;
-  const kandidat = data.kasus.kandidat;
-  const b = k.borda;
-  $("judulAnimasi").textContent = `Bagaimana ${m.ind.length} peringkat individual digabung`;
-  $("ketAnimasi").textContent = `Tiap penilai menyumbang poin ke setiap kandidat: bobot peringkatnya (${b.bobot_borda.join(", ")} untuk peringkat 1, 2, 3) `
-    + "dikali skor preferensi V dari TOPSIS-nya. Poin dari semua penilai dijumlahkan; kandidat dengan total terbesar menjadi keputusan kelompok.";
-
-  // Batang bertumpuk per kandidat; satu segmen per penilai, warna = identitas penilai.
+  const nama = h.alternatif.map((a) => a.san);
+  const b = h.borda;
+  $("judulAnimasi").textContent = `Bagaimana ${h.topsis.length} peringkat digabung`;
+  $("ketAnimasi").textContent = `Tiap anggota menyumbang poin ke setiap alternatif: bobot peringkatnya (${b.bobot_borda.join(", ")} untuk peringkat ${b.bobot_borda.map((_, i) => i + 1).join(", ")}) `
+    + "dikali skor preferensi V dari TOPSIS gayanya. Poin semua anggota dijumlahkan; total terbesar menjadi keputusan kelompok.";
   const batang = $("batang");
   batang.replaceChildren();
-  kandidat.forEach((nama, i) => {
+  nama.forEach((n, i) => {
     const baris = el("div", "batang-baris");
-    baris.dataset.kandidat = String(i);
-    baris.append(el("span", "batang-nama", nama));
+    baris.dataset.alt = String(i);
+    baris.append(el("span", "batang-nama", n));
     const jalur = el("div", "batang-jalur");
-    m.ind.forEach((o, d) => {
-      const seg = el("span", `segmen ${identitas(o).kelas}`);
+    h.topsis.forEach((t, d) => {
+      const seg = el("span", `segmen ${kelasDm(t.pengguna_id)}`);
       seg.dataset.penilai = String(d);
       const lebar = (m.sumbangan[d][i] / m.maks) * 100;
       seg.dataset.lebar = lebar.toFixed(3);
-      if (lebar >= 9) seg.textContent = identitas(o).inisial;
+      if (lebar >= 9) seg.textContent = inisial(t.nama);
       jalur.append(seg);
     });
     baris.append(jalur, el("span", "batang-total", f(0)));
     batang.append(baris);
   });
-
-  // Tabel peringkat individual: dari mana poin tiap kandidat berasal.
-  tabel($("tabelPeringkat"), "Sumbangan poin Borda tiap penilai per kandidat",
-    ["Penilai", ...kandidat],
-    [...m.ind.map((o, d) => [o.nama, ...kandidat.map((_, i) => `#${o.topsis.rank[i]} → ${b.bobot_borda[o.topsis.rank[i] - 1]} × ${f(o.topsis.v[i])} = ${f(m.sumbangan[d][i])}`)]),
-      ["Total poin", ...kandidat.map((_, i) => f(b.poin[i]))]],
-    (r) => (r === m.ind.length ? "total" : identitas(m.ind[r]).kelas));
-  // Lencana di kolom penilai.
+  tabel($("tabelPeringkat"), "Sumbangan poin Borda tiap anggota per alternatif", ["Anggota", ...nama],
+    [...h.topsis.map((t, d) => [t.nama, ...nama.map((_, i) => `#${t.hasil.rank[i]} → ${b.bobot_borda[t.hasil.rank[i] - 1]} × ${f(t.hasil.v[i])} = ${f(m.sumbangan[d][i])}`)]),
+      ["Total poin", ...nama.map((_, i) => f(b.poin[i]))]],
+    (r) => (r === h.topsis.length ? "total" : kelasDm(h.topsis[r].pengguna_id)));
   $("tabelPeringkat").querySelectorAll("tbody tr").forEach((tr, r) => {
-    if (r < m.ind.length) tr.firstChild.replaceChildren(namaDm(m.ind[r]));
+    const t = h.topsis[r];
+    if (t) tr.firstChild.replaceChildren(namaDm({ ...orangDenganId(t.pengguna_id), nama: t.nama, gaya_nama: t.gaya_nama }));
   });
   putarAnimasi();
 }
 
 function setLangkah(d) {
-  // d = jumlah penilai yang sudah ditumpuk (0..n); d = n+1 berarti pemenang ditandai.
   const m = modelAnimasi;
-  const b = data.konsensus.borda;
-  const n = m.ind.length;
+  const b = m.h.borda;
+  const n = m.h.topsis.length;
   $("batang").querySelectorAll(".batang-baris").forEach((baris) => {
-    const i = Number(baris.dataset.kandidat);
+    const i = Number(baris.dataset.alt);
     let total = 0;
     baris.querySelectorAll(".segmen").forEach((seg) => {
       const p = Number(seg.dataset.penilai);
@@ -389,107 +636,72 @@ function setLangkah(d) {
     baris.querySelector(".batang-total").textContent = f(d > n ? b.poin[i] : total);
     baris.classList.toggle("menang", d > n && b.rank[i] === 1);
   });
-  $("tabelPeringkat").querySelectorAll("tbody tr").forEach((tr, r) => {
-    tr.classList.toggle("aktif", r === d - 1 && d <= n);
-  });
+  $("tabelPeringkat").querySelectorAll("tbody tr").forEach((tr, r) => tr.classList.toggle("aktif", r === d - 1 && d <= n));
   $("langkahAnim").textContent = d === 0 ? "Mulai dari nol poin."
-    : d <= n ? `Menambahkan poin dari ${m.ind[d - 1].nama} (${d} dari ${n} penilai).`
-      : `Semua poin terkumpul. Keputusan kelompok: ${data.konsensus.pemenang}.`;
+    : d <= n ? `Menambahkan poin dari ${m.h.topsis[d - 1].nama}, gaya ${m.h.topsis[d - 1].gaya_nama.toLowerCase()} (${d} dari ${n}).`
+      : `Semua poin terkumpul. Keputusan kelompok: ${m.h.pemenang.san}.`;
 }
 
 function putarAnimasi() {
   hentikanAnimasi();
   if (!modelAnimasi) return;
-  const n = modelAnimasi.ind.length;
+  const n = modelAnimasi.h.topsis.length;
   const diam = gerakDikurangi.matches;
   $("btnPutar").classList.toggle("sembunyi", diam);
-  if (diam) return setLangkah(n + 1);   // kurangi gerakan: langsung hasil akhir
+  if (diam) return setLangkah(n + 1);
   setLangkah(0);
   for (let d = 1; d <= n + 1; d++) pewaktu.push(setTimeout(() => setLangkah(d), d * JEDA_LANGKAH));
 }
 
 // ------------------------------------------------------------------ pembanding engine
-// Engine hanya pembanding, bukan kriteria: nilainya tidak ikut TOPSIS maupun Borda.
-// Bila server tidak mengirim field `engine` atau engine tidak tersedia, tampilkan status jujur tanpa angka.
-const SELISIH_TIPIS = 20;   // centipawn (0,2 pion): di bawah ini dua langkah dianggap praktis setara
-
-// Nilai engine dari sudut pandang tim (pihak yang berjalan).
+// Nilai engine untuk tiap alternatif hanya ditampilkan sebagai pembanding: tidak ikut TOPSIS maupun Borda.
 function nilaiEngine(x) {
-  if (x.mat !== null && x.mat !== undefined) return x.mat > 0 ? `mat dalam ${x.mat}` : `dimat dalam ${-x.mat}`;
+  if (x.mat !== null && x.mat !== undefined) return x.mat > 0 ? `mat dalam ${x.mat}` : x.mat < 0 ? `dimat dalam ${-x.mat}` : "skakmat";
   const pion = x.cp / 100;
   return (pion > 0 ? "+" : pion < 0 ? "−" : "±") + Math.abs(pion).toFixed(2).replace(".", ",");
 }
-// Selisih dalam centipawn; null bila salah satu bernilai mat (tidak bisa dikurangkan secara bermakna).
-const selisihCp = (a, b) => (a.cp === null || b.cp === null ? null : Math.abs(a.cp - b.cp));
+// Angka urut dari sudut pandang tim: mat untuk tim paling tinggi, dimat paling rendah.
+const urutEngine = (x) => (x.mat === null || x.mat === undefined ? x.cp : x.mat > 0 ? 1e6 - x.mat : x.mat === 0 ? 2e6 : -1e6 - x.mat);
 
-function renderEngine() {
-  const e = data && data.engine;
+function renderEngine(h) {
   const st = $("statusEngine");
+  const eng = h.kriteria.engine || [];
   $("wadahEngine").classList.add("sembunyi");
-  $("ketEngine").classList.add("sembunyi");
   st.className = "status-engine kosong";
-  if (!e) {
-    st.textContent = "Pembanding engine belum tersedia. Server belum menyediakan peringkat engine, jadi belum ada yang dibandingkan.";
+  if (!eng.length || eng.some((x) => !x)) {
+    st.textContent = "Pembanding engine tidak tersedia untuk ronde ini: Stockfish tidak dipakai saat penilaian. Keputusan kelompok tidak terpengaruh.";
     return;
   }
-  const k = data.konsensus;
-  if (!e.tersedia || !k || !Array.isArray(e.kandidat) || e.kandidat.length !== data.kasus.kandidat.length) {
-    st.textContent = "Pembanding engine tidak tersedia" + (e.tersedia ? ": data engine tidak lengkap." : e.alasan ? `: ${e.alasan}` : ".");
-    return;
+  const nama = h.alternatif.map((a) => a.san);
+  const skor = eng.map(urutEngine);
+  const peringkat = skor.map((s) => 1 + skor.filter((x) => x > s).length);
+  const menang = h.borda.pemenang;
+  const sepakat = peringkat[menang] === 1;
+  st.className = "status-engine " + (sepakat ? "sepakat" : "beda");
+  st.textContent = (sepakat ? `Sepakat: ${nama[menang]} juga dinilai paling baik oleh engine.`
+    : `Berbeda: kelompok memilih ${nama[menang]}, sedangkan engine sendiri paling menilai ${nama.filter((_, i) => peringkat[i] === 1).join(" / ")}.`)
+    + " Engine tidak ikut memilih; angka ini hanya pembanding.";
+  if (nama.length > 1) {
+    tabel($("tabelEngine"), "Peringkat kelompok dibandingkan penilaian engine", ["Alternatif", "Peringkat kelompok (Borda)", "Peringkat engine", `Nilai engine (pion, sudut tim ${h.kriteria.sumber.sisi_tim})`],
+      nama.map((n, i) => [n, String(h.borda.rank[i]), String(peringkat[i]), nilaiEngine(eng[i])]),
+      (i) => (h.borda.rank[i] === 1 ? "menang" : ""));
+    $("wadahEngine").classList.remove("sembunyi");
   }
-  const kandidat = data.kasus.kandidat;
-  const iKel = kandidat.indexOf(k.pemenang);
-  const kel = e.kandidat[iKel];
-  const terbaik = e.kandidat.filter((x) => x.peringkat === 1);
-  st.className = "status-engine " + (kel && kel.peringkat === 1 ? "sepakat" : "beda");
-  if (kel && kel.peringkat === 1) {
-    st.textContent = `Sepakat: langkah pilihan kelompok (${k.pemenang}) juga peringkat 1 menurut engine.`;
-  } else {
-    const d = kel && terbaik[0] ? selisihCp(kel, terbaik[0]) : null;
-    st.textContent = `Berbeda: kelompok memilih ${k.pemenang} (peringkat ${kel ? kel.peringkat : "?"} menurut engine), `
-      + `sedangkan engine paling menilai ${terbaik.map((x) => x.langkah).join(" / ")}.`
-      + (d === null ? "" : d <= SELISIH_TIPIS
-        ? ` Selisih nilainya hanya ${(d / 100).toFixed(2).replace(".", ",")} pion, praktis setara.`
-        : ` Selisih nilainya ${(d / 100).toFixed(2).replace(".", ",")} pion.`);
-  }
-  tabel($("tabelEngine"), "Peringkat kelompok dibandingkan peringkat engine",
-    ["Kandidat", "Peringkat kelompok (Borda)", "Peringkat engine", `Nilai engine (pion, sudut ${e.sudut_pandang || "tim"})`, "Perbandingan"],
-    kandidat.map((n, i) => {
-      const x = e.kandidat[i];
-      const sama = x.peringkat === k.borda.rank[i];
-      return [n, String(k.borda.rank[i]), String(x.peringkat), nilaiEngine(x), sama ? "= sama" : "≠ berbeda"];
-    }),
-    (i) => (k.borda.rank[i] === 1 ? "menang" : ""));
-  $("tabelEngine").querySelectorAll("tbody tr").forEach((tr) => {
-    const sel = tr.lastChild;
-    sel.className = sel.textContent.startsWith("=") ? "cocok" : "tidak-cocok";
-  });
-  $("wadahEngine").classList.remove("sembunyi");
-  const ket = $("ketEngine");
-  ket.textContent = `Engine hanya pembanding: nilainya tidak ikut dihitung dalam TOPSIS maupun Borda. `
-    + `Dianalisis ${e.engine || "engine"}${e.batas ? `, kedalaman ${e.batas.kedalaman}, maksimal ${String(e.batas.waktu_detik).replace(".", ",")} detik` : ""}. `
-    + "Nilai positif berarti menguntungkan tim; selisih kecil (di bawah 0,2 pion) praktis setara.";
-  ket.classList.remove("sembunyi");
 }
 
 // ------------------------------------------------------------------ pemuatan dan penyegaran
-const JEDA_SEGAR = 15000;
+const JEDA_SEGAR = 4000;
 const SESI_HABIS = "Sesi berakhir, silakan masuk lagi.";
-let pengendali = null;   // AbortController untuk /api/kasus yang sedang berjalan (maksimal satu)
+let pengendali = null;
 let waktuMuat = 0;
-let sibuk = 0;           // jumlah aksi pengguna yang sedang dikirim
+let sibuk = 0;
 
 const jam = (t) => new Date(t).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-
 function infoSegar(teks) {
   $("infoSegar").textContent = teks !== undefined ? teks : !data ? ""
-    : `Diperbarui pukul ${jam(waktuMuat)}. ` + (data.konsensus
-      ? "Hasil sudah final; penyegaran otomatis berhenti."
-      : `Diperbarui otomatis tiap ${JEDA_SEGAR / 1000} detik.`);
+    : `Diperbarui pukul ${jam(waktuMuat)}; diperbarui otomatis tiap ${JEDA_SEGAR / 1000} detik.`;
 }
 
-// paksa = true membatalkan permintaan yang sedang berjalan (dipakai setelah aksi pengguna);
-// penyegaran berkala (paksa = false) dilewati bila masih ada permintaan berjalan.
 async function muat(paksa) {
   if (pengendali) {
     if (!paksa) return;
@@ -497,14 +709,14 @@ async function muat(paksa) {
   }
   const ini = new AbortController();
   pengendali = ini;
-  infoSegar("Menyegarkan…");
-  $("infoSegar").parentElement.setAttribute("aria-busy", "true");
   try {
-    data = await api("/api/kasus", undefined, ini.signal);
+    data = await api("/api/ronde", undefined, ini.signal);
     waktuMuat = Date.now();
     tampilApp();
     pesan("");
-    render();
+    mungkinAnimasiPapan();
+    renderRonde();
+    renderHasil();
   } catch (e) {
     if (e.name === "AbortError") return;
     if (e.status === 401) return tampilLogin(data ? SESI_HABIS : "");
@@ -512,7 +724,6 @@ async function muat(paksa) {
   } finally {
     if (pengendali === ini) {
       pengendali = null;
-      $("infoSegar").parentElement.removeAttribute("aria-busy");
       infoSegar();
     }
   }
@@ -527,7 +738,7 @@ function tampilApp() {
 function tampilLogin(info) {
   if (pengendali) { pengendali.abort(); pengendali = null; }
   data = null;
-  tandaForm = "";
+  tandaPapan = ""; tandaHasil = ""; tandaHasilPapan = null; pilih = null;
   $("viewMuat").classList.add("sembunyi");
   $("viewApp").classList.add("sembunyi");
   $("akun").classList.add("sembunyi");
@@ -536,13 +747,6 @@ function tampilLogin(info) {
   if (info) $("inUser").focus();
 }
 
-// Galat aksi: sesi habis kembali ke login dengan penjelasan, selain itu tampil di wadah pesan terkait.
-function tanganiGalat(e, id) {
-  if (e.status === 401) return tampilLogin(SESI_HABIS);
-  pesan(e.message, true, id);
-}
-
-// Tombol langsung dinonaktifkan dan teksnya berubah selama permintaan, mencegah kirim ganda.
 async function kirimDengan(tombol, teksSibuk, kerja) {
   if (tombol.disabled) return;
   const teksAsli = tombol.textContent;
@@ -557,31 +761,7 @@ async function kirimDengan(tombol, teksSibuk, kerja) {
     tombol.textContent = teksAsli;
     tombol.disabled = false;
     tombol.removeAttribute("aria-busy");
-    aturTombol();
   }
-}
-
-// ------------------------------------------------------------------ validasi FEN di sisi klien
-// Mencerminkan fen_valid() di app.py, tetapi dengan pesan yang menunjuk letak kesalahan.
-// Server tetap menjadi pemeriksa akhir.
-function cekFen(fen) {
-  const bagian = fen.trim().split(/\s+/);
-  if (bagian.length < 2 || !bagian[0]) {
-    return "FEN harus berisi minimal dua bagian yang dipisah spasi: susunan bidak dan giliran (w atau b).";
-  }
-  const baris = bagian[0].split("/");
-  if (baris.length !== 8) return `Susunan bidak harus 8 baris yang dipisah "/", bukan ${baris.length} baris.`;
-  for (let i = 0; i < 8; i++) {
-    let n = 0;
-    for (const ch of baris[i]) {
-      if (/[1-8]/.test(ch)) n += Number(ch);
-      else if ("prnbqkPRNBQK".includes(ch)) n += 1;
-      else return `Karakter "${ch}" pada baris ke-${i + 1} tidak dikenal. Pakai huruf bidak (KQRBNP / kqrbnp) atau angka 1–8.`;
-    }
-    if (n !== 8) return `Baris ke-${i + 1} ("${baris[i]}") berisi ${n} petak; setiap baris harus tepat 8 petak.`;
-  }
-  if (bagian[1] !== "w" && bagian[1] !== "b") return `Giliran harus "w" (putih) atau "b" (hitam), bukan "${bagian[1]}".`;
-  return "";
 }
 
 // ------------------------------------------------------------------ peristiwa
@@ -606,109 +786,35 @@ $("btnKeluar").addEventListener("click", () => kirimDengan($("btnKeluar"), "Kelu
     else pesan(e.message, true);
   }
 }));
-$("btnPutar").addEventListener("click", putarAnimasi);
-gerakDikurangi.addEventListener("change", () => { if (modelAnimasi && data && data.konsensus) putarAnimasi(); });
-$("btnSegar").addEventListener("click", () => kirimDengan($("btnSegar"), "Menyegarkan…", () => muat(true)));
-
-$("tabelNilai").addEventListener("change", () => { if (data) infoKirim(true); });
-$("btnKirim").addEventListener("click", () => kirimDengan($("btnKirim"), "Mengirim…", async () => {
-  const skor = data.kasus.kandidat.map((_, i) => data.kriteria.map((__, j) => Number($(`n_${i}_${j}`).value)));
-  pesan("", false, "pesanNilai");
-  try {
-    await api("/api/nilai", { skor });
-    pesan(`Penilaian tersimpan pukul ${jam(Date.now())}.`, false, "pesanNilai");
-    await muat(true);
-  } catch (e) { tanganiGalat(e, "pesanNilai"); }
-}));
-$("btnKonsensus").addEventListener("click", () => kirimDengan($("btnKonsensus"), "Menjalankan…", async () => {
-  pesan("", false, "pesanKapten");
-  try {
-    await api("/api/konsensus", {});
-    pesan("Konsensus Borda selesai dijalankan.", false, "pesanKapten");
-    await muat(true);
-  } catch (e) { tanganiGalat(e, "pesanKapten"); }
-}));
-$("btnUlang").addEventListener("click", () => {
-  if (!confirm("Hapus semua penilaian dan hasil konsensus pada kasus ini?")) return;
-  kirimDengan($("btnUlang"), "Mengulang…", async () => {
-    pesan("", false, "pesanKapten");
+$("btnRondeBaru").addEventListener("click", () => {
+  if (!confirm("Mulai permainan baru dari posisi awal? Usulan yang belum dinilai di ronde ini akan ditinggalkan.")) return;
+  kirimDengan($("btnRondeBaru"), "Memulai…", async () => {
     try {
       await api("/api/ulang", {});
-      pesan("Putaran penilaian diulang. Semua decision maker perlu menilai lagi.", false, "pesanKapten");
-      await muat(true);
-    } catch (e) { tanganiGalat(e, "pesanKapten"); }
-  });
-});
-$("kFen").addEventListener("input", () => {
-  $("kFen").removeAttribute("aria-invalid");
-  $("galatKasus").textContent = "";
-});
-$("btnUsul").addEventListener("click", () => {
-  const salah = cekFen($("kFen").value);
-  $("infoUsul").textContent = "";
-  if (salah) {
-    $("galatKasus").textContent = "Isi FEN yang sah dulu. " + salah;
-    $("kFen").setAttribute("aria-invalid", "true");
-    $("kFen").focus();
-    return;
-  }
-  kirimDengan($("btnUsul"), "Meminta usulan…", async () => {
-    $("galatKasus").textContent = "";
-    try {
-      const j = await api("/api/usul-kandidat", { fen: $("kFen").value.trim() });
-      ["kK1", "kK2", "kK3"].forEach((id, i) => { $(id).value = j.kandidat[i]; });
-      $("infoUsul").textContent = "Kandidat diisi dari usulan engine (urut abjad, bukan peringkat engine). Boleh diubah sebelum disimpan.";
-    } catch (e) {
-      if (e.status === 401) tampilLogin(SESI_HABIS);
-      else $("galatKasus").textContent = e.message;
-    }
-  });
-});
-$("formKasus").addEventListener("submit", (ev) => {
-  ev.preventDefault();
-  const salah = cekFen($("kFen").value);
-  if (salah) {
-    $("galatKasus").textContent = "FEN ditolak: " + salah;
-    $("kFen").setAttribute("aria-invalid", "true");
-    $("kFen").focus();
-    return;
-  }
-  kirimDengan($("btnSimpan"), "Menyimpan…", async () => {
-    $("galatKasus").textContent = "";
-    try {
-      const j = await api("/api/kasus-baru", {
-        judul: $("kJudul").value, fen: $("kFen").value, riwayat: $("kRiwayat").value,
-        kandidat: [$("kK1").value, $("kK2").value, $("kK3").value],
-      });
-      $("formKasus").reset();
-      $("infoUsul").textContent = "";
-      pesan("Kasus baru dibuat. Penilaian dimulai dari awal." + (j.peringatan ? ` ${j.peringatan}` : ""), false, "pesanKapten");
+      pilih = null;
+      pesanPapan("Permainan baru dimulai dari posisi awal.");
       await muat(true);
     } catch (e) {
       if (e.status === 401) return tampilLogin(SESI_HABIS);
-      $("galatKasus").textContent = e.message;
-      // Pesan server "Kandidat N: ..." menunjuk kolom yang salah; tandai kolom itu.
-      const m = /^Kandidat (\d)/.exec(e.message);
-      if (m && $(`kK${m[1]}`)) { $(`kK${m[1]}`).setAttribute("aria-invalid", "true"); $(`kK${m[1]}`).focus(); }
+      pesan(e.message, true);
     }
   });
 });
-["kK1", "kK2", "kK3"].forEach((id) => $(id).addEventListener("input", () => $(id).removeAttribute("aria-invalid")));
+$("btnPutar").addEventListener("click", putarAnimasi);
+gerakDikurangi.addEventListener("change", () => { if (modelAnimasi) putarAnimasi(); });
+$("btnSegar").addEventListener("click", () => kirimDengan($("btnSegar"), "Menyegarkan…", () => muat(true)));
 
-// Penyegaran berkala agar status penilaian dan hasil konsensus muncul tanpa muat ulang halaman.
-// Dilewati bila: belum masuk, hasil sudah final, tab tidak aktif, permintaan/aksi masih berjalan,
-// atau pengguna sedang memilih nilai pada dropdown.
+// Penyegaran berkala: status anggota lain dan hasil penilaian muncul tanpa muat ulang halaman.
+// Dilewati saat belum masuk, tab tidak aktif, permintaan/aksi berjalan, bidak sedang dipilih/diseret,
+// atau animasi papan sedang berjalan.
 function perluSegar() {
-  if (!data || data.konsensus || document.hidden || pengendali || sibuk) return false;
-  const aktif = document.activeElement;
-  return !(aktif && aktif.tagName === "SELECT");
+  return !!data && !document.hidden && !pengendali && !sibuk && !mengirim && !seret && !pilih && !animasiPapanJalan;
 }
 setInterval(() => { if (perluSegar()) muat(false); }, JEDA_SEGAR);
 document.addEventListener("visibilitychange", () => {
   if (perluSegar() && Date.now() - waktuMuat >= JEDA_SEGAR) muat(false);
 });
 
-// Muat awal: /api/me tidak menghasilkan 401 saat belum masuk, jadi konsol tetap bersih.
 (async () => {
   try {
     const me = await api("/api/me");
