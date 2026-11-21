@@ -1,11 +1,14 @@
-# SKAKMAT: GDSS Pemilihan Langkah Catur
+# SKAKMAT: Catur Konsultasi GDSS
 
-Sistem Kolaborasi Analis untuk Keputusan Melangkah Antar Tim. Project akhir Praktikum Sistem Informasi,
-Kelompok 2, Kelas B.
+Sistem Kolaborasi Analis untuk Keputusan Melangkah Antar Tim. Project akhir Praktikum Sistem
+Informasi, Kelompok 2, Kelas B.
 
-Website GDSS dengan empat decision maker (Kapten, Analis 1, Analis 2, Analis 3). Setiap akun menilai
-tiga kandidat langkah catur secara individual (TOPSIS). Setelah keempatnya selesai, akun Kapten
-(jabatan tertinggi) menjalankan konsensus dengan voting Borda. Semua akun dapat melihat hasilnya.
+Tiga akun **setara** membuka papan yang sama dan memainkan bidak putih bersama. Tiap ronde, setiap
+anggota mengusulkan satu langkah dengan **menggerakkan bidak di papan** — itu satu-satunya input
+pengguna di seluruh aplikasi (selain login). Begitu ketiga usulan masuk, sistem menilai otomatis:
+nilai C1–C5 diukur mesin dari posisi papan, TOPSIS dijalankan sekali per anggota dengan bobot gaya
+mainnya, lalu voting Borda menggabungkan ketiga peringkat itu menjadi satu keputusan kelompok.
+Langkah pemenang dimainkan, lawan membalas, dan ronde berikutnya dimulai tanpa input tambahan.
 
 ## Cara menjalankan
 
@@ -14,11 +17,11 @@ Kebutuhan:
 | Komponen | Wajib? | Untuk apa |
 |---|---|---|
 | Python 3.9 atau lebih baru | wajib | server, TOPSIS, Borda |
-| `chess` (python-chess) 1.11.2 | disarankan | memeriksa legalitas posisi FEN dan kandidat langkah |
-| Program Stockfish | opsional | pembanding engine dan usulan kandidat |
+| `chess` (python-chess) 1.11.2 | wajib untuk bermain | memeriksa legalitas langkah yang diusulkan dan memainkannya |
+| Program Stockfish | disarankan | mengukur C1–C5, memainkan balasan lawan, dan pembanding |
 
-Tanpa python-chess dan Stockfish aplikasi **tetap berjalan**, tapi kandidat langkah tidak diperiksa
-legalitasnya (server memberi peringatan) dan bagian pembanding engine menampilkan "tidak tersedia".
+Tanpa python-chess, papan hanya bisa dilihat (usulan ditolak dengan pesan jelas). Tanpa Stockfish,
+C2 diukur secara statis dan lawan memakai aturan sederhana; keduanya ditandai di tampilan.
 
 ### 1. Paket Python
 
@@ -59,8 +62,6 @@ SKAKMAT_STOCKFISH=mati .venv/bin/python app.py      # sengaja tanpa engine
 .venv/bin/python app.py     # Windows: .venv\Scripts\python app.py
 ```
 
-`python app.py` (tanpa venv) juga jalan, hanya saja tanpa validasi legalitas dan tanpa engine.
-
 Buka http://127.0.0.1:8000 di browser. Berhenti dengan Ctrl+C.
 
 Supaya anggota kelompok lain bisa membuka dari laptop atau HP di jaringan yang sama:
@@ -69,147 +70,198 @@ Supaya anggota kelompok lain bisa membuka dari laptop atau HP di jaringan yang s
 .venv/bin/python app.py --host 0.0.0.0 --port 8000
 ```
 
-lalu buka `http://<alamat-IP-laptop>:8000`.
+lalu buka `http://<alamat-IP-laptop>:8000`. Tiap anggota memakai perangkatnya sendiri dan masuk
+dengan akunnya sendiri.
 
-Basis data SQLite `skakmat.db` dibuat otomatis saat pertama dijalankan. Hapus berkas itu untuk
-mengulang dari awal.
+Basis data SQLite `skakmat.db` dibuat otomatis saat pertama dijalankan. Bila file lama dari alur
+sebelumnya (skema 1: Kapten dan penilaian manual) masih ada, file itu **dicadangkan** ke
+`skakmat.db.lama-<tanggal>-<jam>` lalu diganti skema baru — aplikasi tidak mati karena basis data
+lama. Hapus `skakmat.db` untuk mengulang dari awal.
 
 ## Akun
 
-| Akun | Kata sandi | Peran |
-|---|---|---|
-| kapten | kapten123 | Jabatan tertinggi, menjalankan konsensus |
-| analis1 | analis123-1 | Decision maker |
-| analis2 | analis123-2 | Decision maker |
-| analis3 | analis123-3 | Decision maker |
+| Akun | Kata sandi | Gaya main | Bobot C1–C5 |
+|---|---|---|---|
+| anggota1 | anggota123-1 | Menyerang | 20 · 15 · 20 · 30 · 15 |
+| anggota2 | anggota123-2 | Seimbang | 25 · 20 · 20 · 20 · 15 |
+| anggota3 | anggota123-3 | Bertahan | 30 · 30 · 15 · 10 · 15 |
 
-Kata sandi di atas hanya akun demo. Ubah pada daftar `AKUN` di `app.py` sebelum basis data dibuat.
+Ketiganya **setara** — tidak ada jabatan, tidak ada akun yang punya hak istimewa. Yang membedakan
+hanya gaya main. Kata sandi di atas hanya akun demo; ubah pada daftar `AKUN` di `app.py` sebelum
+basis data dibuat.
 
 ## Alur penggunaan
 
-1. Masuk dengan salah satu akun. Posisi papan, riwayat langkah, dan tiga kandidat langkah tampil.
-2. Setiap decision maker menilai tiap kandidat pada lima kriteria (skala 1 sampai 5), lalu menekan
-   **Kirim penilaian**. Penilaian bisa diubah sampai konsensus dijalankan. Hasil TOPSIS pribadi langsung tampil.
-3. Setelah keempat akun menilai, Kapten menekan **Jalankan konsensus (Borda)**.
-4. Seluruh akun melihat langkah terpilih, tabel Borda, dan penilaian individual semua anggota.
-5. Kapten dapat **Mengulangi putaran** atau **Membuat kasus baru** (FEN posisi, riwayat, tiga kandidat).
-   Posisi dan ketiga kandidat diperiksa legalitasnya; kandidat ilegal ditolak dengan alasan. Tombol
-   **Usulkan kandidat dari engine** (opsional) mengisi tiga kandidat dari Stockfish; boleh diubah.
+1. **Masuk** dengan salah satu akun. Papan, ronde, dan riwayat langkah langsung tampil.
+2. **Usulkan langkah dengan menggerakkan bidak.** Klik bidak putih (petak tujuan yang sah langsung
+   ditandai), lalu klik tujuan. Bisa juga diseret. Dengan keyboard: Tab ke bidak, Enter untuk
+   memilih, Tab ke petak tujuan, Enter untuk mengusulkan, Esc untuk batal. Langkah ilegal ditolak
+   server dan bidak kembali ke tempatnya dengan pesan singkat.
+3. **Usulan masih bisa diganti** (dengan menggerakkan bidak lain) sampai anggota terakhir mengusulkan.
+   Usulan anggota lain baru terlihat setelah ronde dinilai, supaya tiap usulan tetap independen.
+4. **Begitu usulan ketiga masuk, penilaian berjalan otomatis** — tidak ada tombol "jalankan
+   konsensus". Semua akun melihat hasil yang sama: nilai C1–C5, tiga tabel TOPSIS per gaya, tabel
+   Borda, animasi penggabungan, dan pembanding engine.
+5. **Langkah pemenang dimainkan, lawan membalas** (Stockfish), lalu ronde berikutnya siap diisi.
+   Riwayat langkah diperbarui. Bila permainan selesai (skakmat/seri), tombol **Ronde baru** memulai
+   permainan lagi dari posisi awal; riwayat permainan sebelumnya tetap tersimpan di server.
+
+Tidak ada form isian di aplikasi ini: tidak ada dropdown nilai, tidak ada isian FEN, tidak ada
+"buat kasus baru", tidak ada kotak teks. Satu-satunya input adalah gerakan bidak.
 
 ## Metode
 
-Kriteria (skala 1 sampai 5):
+### Kriteria C1–C5, diukur mesin
 
-| Kode | Kriteria | Bobot | Jenis |
+Nilai dihitung **dari posisi setelah langkah dijalankan**, skalanya 1–5, dan deterministik: posisi
+yang sama selalu menghasilkan angka yang sama (Stockfish 1 thread, hash dibersihkan).
+
+| Kode | Kriteria | Jenis | Cara mengukur |
 |---|---|---|---|
-| C1 | Keamanan raja | 25 | benefit |
-| C2 | Keamanan material | 20 | benefit |
-| C3 | Penguasaan pusat papan | 20 | benefit |
-| C4 | Peluang serangan | 20 | benefit |
-| C5 | Risiko serangan balik lawan | 15 | cost |
+| C1 | Keamanan raja | benefit | pion pelindung di depan raja dikurangi jumlah serangan lawan ke petak sekitar raja |
+| C2 | Keamanan material | benefit | perubahan selisih material setelah variasi utama Stockfish dimainkan, termasuk pertukaran yang belum selesai; tanpa engine: selisih material dikurangi ancaman tangkapan terbesar lawan |
+| C3 | Penguasaan pusat papan | benefit | serangan dan bidak tim di d4, e4, d5, e5 dikurangi milik lawan |
+| C4 | Peluang serangan | benefit | bidak lawan yang diserang, jumlah skak, dan mobilitas tim |
+| C5 | Risiko serangan balik lawan | cost | tangkapan menguntungkan dan langkah skak yang tersedia bagi lawan |
 
-**TOPSIS (individual):** normalisasi vektor per kriteria, dikali bobot, solusi ideal positif dan negatif
+Skala dipetakan dengan `tanh` supaya tidak didominasi satu kriteria, lalu dinormalisasi lagi oleh
+TOPSIS. Mesin **hanya mengukur**; ia tidak memilih langkah dan bukan kriteria ke-6.
+
+### Kenapa TOPSIS dijalankan tiga kali
+
+Nilai C1–C5 sama untuk semua anggota (dihitung mesin dari papan). Kalau bobotnya juga sama, ketiga
+ranking akan identik dan Borda hanya mengulang hasil TOPSIS tanpa menambah informasi apa pun. Karena
+itu tiap anggota punya **gaya main** dengan bobot berbeda, persis premis laporan: *"setiap anggota
+memiliki penilaian dan prioritas yang berbeda: ada yang condong menyerang, ada pula yang memilih
+bertahan."*
+
+Alurnya:
+
+1. Ketiga usulan menjadi **alternatif** (usulan yang sama digabung jadi satu alternatif, dukungan
+   dicatat).
+2. C1–C5 diukur mesin untuk tiap alternatif → satu matriks keputusan bersama.
+3. **TOPSIS tiga kali**, sekali per gaya → tiga peringkat yang bisa berbeda.
+4. **Borda** menggabungkan ketiga peringkat → satu keputusan kelompok.
+
+Dengan begitu TOPSIS punya kerja nyata (memeringkat dari sudut pandang tertentu) dan Borda punya
+kerja nyata (menggabungkan sudut pandang yang saling berbeda), sementara pengguna tetap nol input.
+
+**TOPSIS:** normalisasi vektor per kriteria, dikali bobot gaya, solusi ideal positif dan negatif
 (benefit dan cost dibedakan), jarak D+ dan D−, skor preferensi V = D− / (D+ + D−), lalu peringkat.
 
-**Borda (kelompok):** untuk tiga kandidat, bobot peringkat 1, 2, 3 adalah 3, 2, 1. Poin kandidat =
-jumlah (bobot Borda dari peringkatnya × skor preferensi V) dari seluruh decision maker. Nilai Borda =
-poin / total poin. Kandidat dengan nilai Borda tertinggi menjadi keputusan kelompok. Bila nilai
-sama persis, peringkat dari Kapten yang menentukan.
+**Borda:** untuk n alternatif, bobot peringkat 1..n adalah n, n−1, ..., 1. Poin alternatif =
+jumlah (bobot Borda dari peringkatnya × skor preferensi V) dari ketiga anggota. Nilai Borda =
+poin / total poin. Nilai tertinggi menjadi keputusan kelompok. Aturan seri (karena tidak ada jabatan
+tertinggi): **dukungan usulan**, lalu **jumlah peringkat TOPSIS**, lalu **urutan usulan**.
 
-Hasil mencerminkan kesepakatan kelompok, bukan jaminan langkah terbaik atau kemenangan. Keputusan
-kelompok sepenuhnya berasal dari penilaian anggota; analisis posisi dilakukan anggota lewat kriteria.
+Bukti Borda benar-benar mengubah hasil ada di `test_gdss.py`: pada matriks contoh, TOPSIS gaya
+seimbang memilih alternatif 0 sementara Borda memilih alternatif 2. Dari 4997 matriks acak,
+peringkat tiga profil tidak seragam pada 3083 kasus dan pemenang Borda berbeda dari pemenang TOPSIS
+tunggal pada 49 kasus. Pada percobaan nyata di browser, dua anggota memilih satu langkah dan
+anggota ketiga memilih langkah lain — Borda memutuskan pemenangnya dan UI menjelaskan siapa yang
+setuju dan siapa yang tidak.
 
-### Engine sebagai pembanding, bukan kriteria
+### Peran engine: mengukur, bukan memilih
 
 Stockfish **tidak** ikut menentukan keputusan. Nilainya tidak masuk TOPSIS maupun Borda, dan tidak
-menjadi kriteria ke-6. Alasannya: skala engine (centipawn, tak terbatas, dari sudut satu pihak)
-tidak sebanding dengan skala penilaian manusia 1 sampai 5; menggabungkan keduanya tanpa dasar akan
-membuat hasil tidak bisa dipertanggungjawabkan.
+menjadi kriteria ke-6. Engine dipakai untuk:
 
-Engine hanya dipakai untuk:
+1. **Mengukur C1–C5** (C2 memakai variasi utamanya; C1, C3, C4, C5 dari python-chess dengan bantuan
+   analisis engine bila tersedia).
+2. **Memeriksa legalitas** langkah usulan (cukup python-chess).
+3. **Memainkan balasan lawan** (kedalaman 10) supaya ronde berikutnya bisa mulai otomatis.
+4. **Pembanding**, setelah konsensus: peringkat kelompok disandingkan dengan peringkat engine, dengan
+   penanda sepakat/berbeda dan catatan bila selisihnya praktis setara. Angka ini ditahan sampai
+   konsensus selesai supaya anggota tidak terpengaruh.
 
-1. **Memeriksa legalitas** posisi dan kandidat langkah (cukup python-chess, tanpa Stockfish).
-2. **Mengusulkan** tiga kandidat untuk Kapten (opsional). Usulan diurutkan menurut abjad, bukan
-   menurut nilai engine, supaya tidak membocorkan peringkat engine sebelum anggota menilai.
-3. **Membandingkan**, setelah konsensus, peringkat kelompok dengan peringkat engine: tabel
-   berdampingan, penanda sama/berbeda, dan keterangan bila selisihnya di bawah 0,2 pion (praktis
-   setara). Peringkat engine **ditahan sampai konsensus dijalankan**, supaya anggota tidak terpengaruh.
+Batas engine: kedalaman 12 dan sekitar 0,02–1,5 detik per analisis untuk kriteria, kedalaman 10
+untuk balasan lawan, satu analisis sekaligus, hasil disimpan di memori (cache). Bila engine tidak
+ada, macet, atau gagal, server tetap berjalan dan menandai mode yang dipakai.
 
-Batas engine: kedalaman 16 dan maksimal 1,5 detik per analisis, 5 detik untuk start, satu analisis
-sekaligus. Hasil disimpan di memori server. Bila engine tidak ada, macet, atau gagal, server
-mengirim `{"tersedia": false, "kode": ..., "alasan": ...}` dan seluruh halaman tetap berjalan.
+Hasil mencerminkan kesepakatan kelompok, bukan jaminan langkah terbaik atau kemenangan.
 
 ## Tampilan (front end)
 
 Front end ada di `static/` dan hanya memakai HTML, CSS, dan JavaScript biasa (tanpa framework, tanpa
-build step). Perubahan pada pembaruan front end:
+build step).
 
-- **Papan catur:** bidak memakai glyph solid untuk kedua warna; bidak putih diberi garis tepi tebal
-  agar terbaca di petak terang. Font simbol disebut eksplisit karena di sebagian sistem font ikon
-  (mis. Font Awesome) membuat bidak hitam tidak tampil. Papan tetap persegi di semua lebar layar.
-- **Penyegaran otomatis** tiap 15 detik, satu permintaan sekali jalan, berhenti saat tab tidak aktif
-  dan setelah konsensus dijalankan (hasil sudah final). Ada keterangan waktu pembaruan terakhir dan
-  tombol **Segarkan** manual. Setelah konsensus, perubahan dari Kapten (ulang putaran, kasus baru)
-  baru terlihat di akun lain setelah menekan Segarkan atau memuat ulang halaman.
-- **Sesi habis** kembali ke halaman masuk dengan pesan "Sesi berakhir, silakan masuk lagi."
-- **Status memuat** saat halaman pertama dibuka, dan tombol aksi langsung nonaktif dengan teks
-  "Mengirim…", "Menjalankan…", dan seterusnya selama permintaan berjalan (mencegah kirim ganda).
-- **Penilaian:** setiap opsi berlabel (mis. "5 – sangat baik"). Kriteria C5 (cost) ditandai jelas;
-  opsinya berbunyi "5 – risiko sangat besar". Di layar sempit (HP/tablet) tabel penilaian tampil
-  sebagai kartu per kandidat.
-- **Status penilaian** menampilkan siapa saja yang belum menilai; Panel Kapten menjelaskan kenapa
-  tombol konsensus belum aktif.
-- **Kasus baru:** FEN diperiksa di browser dengan pesan yang menunjuk letak kesalahan (server tetap
-  memeriksa ulang).
-- **Identitas decision maker:** tiap anggota punya warna aksen dan inisial (K, A1, A2, A3) yang sama
-  di status penilaian, ringkasan "menunggu", tabel individual, dan animasi. Kapten berlencana kotak
-  dengan tag **koordinator**. Keterangan tim menegaskan: satu tim, satu sisi papan, tiap orang di
-  perangkat masing-masing.
-- **Animasi penggabungan Borda:** batang bertumpuk menunjukkan poin tiap penilai (bobot peringkat × V)
-  ditambahkan satu per satu ke setiap kandidat, lalu pemenang ditandai (sekitar 1,7 detik, bisa
-  diputar ulang). Hasil akhir dan tabel Borda sudah tampil sebelum animasi selesai. Bila sistem
-  meminta "kurangi gerakan" (`prefers-reduced-motion`), hasil akhir langsung tampil tanpa animasi.
-- **Pembanding engine:** lihat bagian Metode di atas.
-- **Aksesibilitas:** tabel punya caption, `scope`, dan `aria-label`; pesan memakai `role="status"`
-  atau `role="alert"`; fokus keyboard terlihat; kontras warna memenuhi WCAG AA di mode terang dan gelap.
-
-Semua teks dari server tetap dimasukkan lewat `textContent`, tanpa skrip atau style inline (sesuai CSP).
+- **Papan adalah elemen utama:** 640px pada layar 1440px, memenuhi lebar di HP (326px pada 360px)
+  dan tablet (694px pada 768px), selalu persegi. Klik bidak → petak tujuan sah ditandai → klik
+  tujuan → usulan terkirim. Drag-and-drop tersedia; klik-klik tetap jalan.
+- **Hanya bidak tim sendiri** yang bisa digerakkan. Langkah ilegal ditolak `mesin.py` dan bidak
+  kembali ke tempatnya dengan pesan singkat di bawah papan.
+- **Identitas tiap akun:** warna aksen dan inisial (A1/A2/A3) yang sama di status tim, usulan,
+  penanda petak tujuan di papan, tabel TOPSIS, dan animasi. Tag gaya main (Menyerang/Seimbang/
+  Bertahan) ikut ditampilkan.
+- **Usulan serentak:** petak tujuan usulan tiap anggota ditandai inisial mereka di papan, dan usulan
+  yang sama digabung dengan keterangan dukungan ("usulan ganda: 3 orang").
+- **Hasil penilaian** berisi empat bagian berurutan: (1) daftar usulan anggota, (2) nilai C1–C5 dari
+  mesin, (3) tiga tabel TOPSIS per gaya dengan bobotnya masing-masing, (4) tabel Borda + animasi
+  penggabungan + kalimat penjelas siapa memilih apa dan apa keputusan Borda.
+- **Animasi Borda:** batang bertumpuk menunjukkan poin tiap anggota (bobot peringkat × V)
+  ditambahkan satu per satu, lalu pemenang ditandai (bisa diputar ulang). Hasil akhir dan tabel
+  sudah tampil sebelum animasi selesai, dan `prefers-reduced-motion` dihormati (langsung posisi
+  akhir, tanpa animasi).
+- **Ronde otomatis:** setelah penilaian, papan menganimasikan usulan → langkah pemenang → balasan
+  lawan, lalu ronde baru siap. Ada tombol **Ronde baru** untuk mulai ulang manual.
+- **Penyegaran otomatis** tiap 4 detik, satu permintaan sekali jalan, berhenti saat tab tidak aktif.
+  Ada keterangan waktu pembaruan terakhir dan tombol **Segarkan** manual.
+- **Status memuat**, **sesi habis** (kembali ke halaman masuk), dan **tombol nonaktif** selama
+  permintaan berjalan (mencegah kirim ganda).
+- **Aksesibilitas:** papan bisa dioperasikan penuh dengan keyboard, label petak menyebut koordinat
+  dan nama bidak, `aria-pressed` menandai bidak terpilih, `Esc` membatalkan pilihan; tabel punya
+  `caption`/`scope`; pesan memakai `role="status"` atau `role="alert"`; kontras warna memenuhi
+  WCAG AA di mode terang dan gelap (kontras bidak putih pada petak gelap 4,70:1; hitam pada petak
+  terang 13,91:1).
+- **Tanpa skrip/style inline** (CSP `default-src 'self'`), semua teks dari server masuk lewat
+  `textContent`.
 
 ## Struktur berkas
 
 ```
 SKAKMAT/
-├── app.py            server HTTP, API, basis data, login
-├── gdss.py           perhitungan TOPSIS dan Borda
-├── mesin.py          legalitas langkah (python-chess) dan pembanding engine (Stockfish)
-├── static/           index.html, style.css, app.js
+├── app.py            server HTTP, API, basis data, login, alur ronde
+├── gdss.py           TOPSIS, profil gaya main, voting Borda
+├── mesin.py          legalitas langkah, ukur C1-C5, balasan lawan, pembanding engine (python-chess + Stockfish)
+├── static/           index.html, style.css, app.js, favicon.svg
 ├── requirements.txt  paket Python (chess)
-├── test_gdss.py      tes algoritma (dibandingkan dengan NumPy bila terpasang)
-├── test_e2e.py       tes ujung ke ujung (login, hak akses, konsensus)
-├── test_mesin.py     tes legalitas dan engine: hidup, mati, menggantung, tanpa python-chess
+├── test_gdss.py      tes TOPSIS tiga profil dan Borda (dibandingkan NumPy bila terpasang)
+├── test_e2e.py       tes ujung ke ujung (login, usulan, penilaian otomatis, ronde, migrasi)
+├── test_mesin.py     tes legalitas, C1-C5 deterministik, engine: hidup, mati, menggantung, tanpa python-chess
 └── README.md
 ```
 
 Tes:
 
 ```bash
-python test_gdss.py
+.venv/bin/python test_gdss.py
 .venv/bin/python test_e2e.py
 .venv/bin/python test_mesin.py   # skenario yang butuh python-chess/Stockfish dilewati bila belum ada
 ```
 
-## API tambahan
+## API
 
 | Metode | Path | Keterangan |
 |---|---|---|
-| GET | `/api/kasus` | field baru `engine`: `{"tersedia": true, "engine", "batas", "sudut_pandang", "kandidat": [{"langkah", "san", "cp", "mat", "peringkat"}]}` atau `{"tersedia": false, "kode", "alasan"}`. Field lama tidak berubah. |
-| POST | `/api/usul-kandidat` | `{"fen"}` → `{"ok", "kandidat": [3 langkah, urut abjad]}`. Kapten saja. 400 bila posisi tidak sah, 503 bila engine tidak tersedia. |
-| POST | `/api/kasus-baru` | tambahan: 400 bila posisi/kandidat ilegal; tanpa python-chess respons membawa `peringatan`. |
+| POST | `/api/login` | `{"username", "sandi"}` → set cookie sesi |
+| GET | `/api/me` | pengguna yang sedang masuk |
+| GET | `/api/ronde` | keadaan ronde: kasus (FEN, nomor, riwayat, selesai), peserta + status usulan, usulan sendiri, langkah sah, hasil terakhir, status server. Aman dipanggil berkala — tidak pernah memanggil engine. |
+| POST | `/api/usul` | `{"langkah": "e2e4"}` → usulan satu langkah, tervalidasi legalitasnya. Bila ini usulan terakhir, respons berisi `dinilai: true` dan hasil konsensus. |
+| POST | `/api/konsensus` | menjalankan ulang penilaian bila otomatisnya gagal (mis. server sempat mati). Semua akun boleh. |
+| POST | `/api/ulang` | ronde baru: permainan baru dari posisi awal, riwayat lama tetap tersimpan |
+| POST | `/api/keluar` | hapus sesi |
+
+Endpoint alur lama (`/api/nilai`, `/api/kasus`, `/api/kasus-baru`, `/api/usul-kandidat`) sudah tidak
+dipakai dan menjawab **410 Gone** dengan penjelasan.
+
+Semua endpoint: pemeriksaan asal permintaan (Origin), cek sesi, validasi tipe masukan, dan kueri
+berparameter.
 
 ## Keamanan singkat
 
-Kata sandi disimpan sebagai hash PBKDF2 dengan garam. Sesi memakai cookie HttpOnly dan SameSite=Strict.
-Login dibatasi setelah lima kali gagal. Permintaan POST dengan Origin asing ditolak. Hanya akun Kapten yang
-bisa menjalankan konsensus, mengulang putaran, dan membuat kasus. Semua kueri SQL berparameter, teks dari
-server dimasukkan ke halaman lewat `textContent`, dan Content-Security-Policy melarang skrip inline.
-Aplikasi ini untuk demo kelompok di jaringan lokal, bukan untuk dipasang di internet publik tanpa HTTPS.
+Kata sandi disimpan sebagai hash PBKDF2 dengan garam. Sesi memakai cookie HttpOnly dan
+SameSite=Strict, berlaku 8 jam. Login dibatasi setelah lima kali gagal. Permintaan POST dengan
+Origin asing ditolak. Semua akun setara — tidak ada gerbang hak istimewa. Semua kueri SQL
+berparameter, teks dari server dimasukkan ke halaman lewat `textContent`, dan Content-Security-Policy
+melarang skrip inline. Aplikasi ini untuk demo kelompok di jaringan lokal, bukan untuk dipasang di
+internet publik tanpa HTTPS.
