@@ -10,6 +10,15 @@ nilai C1–C5 diukur mesin dari posisi papan, TOPSIS dijalankan sekali per anggo
 mainnya, lalu voting Borda menggabungkan ketiga peringkat itu menjadi satu keputusan kelompok.
 Langkah pemenang dimainkan, lawan membalas, dan ronde berikutnya dimulai tanpa input tambahan.
 
+## Arsitektur
+
+Backend **FastAPI + Uvicorn** (Python), front end HTML/CSS/JS biasa dari `static/`, basis data SQLite, Stockfish
+opsional. Bisa dijalankan lokal maupun di server (Docker). Penjelasan lengkap, alasan pilihan, dan
+panduan deploy ada di [docs/ARSITEKTUR.md](docs/ARSITEKTUR.md).
+
+Cara tercepat dengan Docker (Stockfish sudah termasuk): `docker compose up --build`, lalu buka
+http://127.0.0.1:8000.
+
 ## Cara menjalankan
 
 Kebutuhan:
@@ -17,6 +26,7 @@ Kebutuhan:
 | Komponen | Wajib? | Untuk apa |
 |---|---|---|
 | Python 3.9 atau lebih baru | wajib | server, TOPSIS, Borda |
+| `fastapi`, `uvicorn` | wajib | server web (terpasang lewat `requirements.txt`) |
 | `chess` (python-chess) 1.11.2 | wajib untuk bermain | memeriksa legalitas langkah yang diusulkan dan memainkannya |
 | Program Stockfish | disarankan | mengukur C1–C5, memainkan balasan lawan, dan pembanding |
 
@@ -220,11 +230,13 @@ build step).
 
 ```
 SKAKMAT/
-├── app.py            server HTTP, API, basis data, login, alur ronde
+├── app.py            FastAPI: API, basis data, sesi, alur ronde
+├── Dockerfile, docker-compose.yml, .env.example   pengemasan dan konfigurasi server
+├── docs/ARSITEKTUR.md   arsitektur, pilihan teknologi, deploy
 ├── gdss.py           TOPSIS, profil gaya main, voting Borda
 ├── mesin.py          legalitas langkah, ukur C1-C5, balasan lawan, pembanding engine (python-chess + Stockfish)
 ├── static/           index.html, style.css, app.js, favicon.svg
-├── requirements.txt  paket Python (chess)
+├── requirements.txt  paket Python (chess, fastapi, uvicorn)
 ├── test_gdss.py      tes TOPSIS tiga profil dan Borda (dibandingkan NumPy bila terpasang)
 ├── test_e2e.py       tes ujung ke ujung (login, usulan, penilaian otomatis, ronde, migrasi)
 ├── test_mesin.py     tes legalitas, C1-C5 deterministik, engine: hidup, mati, menggantung, tanpa python-chess

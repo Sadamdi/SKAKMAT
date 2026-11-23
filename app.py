@@ -14,22 +14,28 @@ dan lawan memakai aturan sederhana; keduanya ditandai di tampilan).
 
     python app.py                 # http://127.0.0.1:8000
     python app.py --port 8080 --host 0.0.0.0   # agar bisa dibuka dari perangkat lain di jaringan
+    uvicorn app:app --host 0.0.0.0 --port 8000   # cara setara; dipakai di Docker/server
+
+Backend memakai FastAPI + Uvicorn; front end statis di static/. Lihat docs/ARSITEKTUR.md.
 """
 import argparse
 import hashlib
 import hmac
 import json
-import mimetypes
 import os
 import secrets
 import shutil
 import sqlite3
 import threading
 import time
-from http import cookies
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+
+import uvicorn
+from fastapi import FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 import gdss
 import mesin
@@ -56,7 +62,7 @@ POSISI_AWAL = {
     "riwayat": ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6"],
 }
 
-sesi = {}          # token -> (user_id, kedaluwarsa)
+COOKIE_AMAN = os.environ.get("SKAKMAT_COOKIE_SECURE") == "1"   # aktifkan bila dilayani lewat HTTPS
 percobaan = {}     # (ip, username) -> (jumlah gagal, waktu kunci habis)
 _kunci_ronde = threading.Lock()   # usulan, penilaian, dan ronde baru diproses satu per satu
 
@@ -78,6 +84,8 @@ CREATE TABLE IF NOT EXISTS pengguna(
     id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, nama TEXT NOT NULL,
     gaya TEXT NOT NULL, garam BLOB NOT NULL, sandi TEXT NOT NULL);
 -- Satu baris = satu ronde (posisi tempat tim harus melangkah). permainan naik saat "Ronde baru".
+CREATE TABLE IF NOT EXISTS sesi(
+    token TEXT PRIMARY KEY, pengguna_id INTEGER NOT NULL REFERENCES pengguna(id), kedaluwarsa REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS kasus(
     id INTEGER PRIMARY KEY AUTOINCREMENT, permainan INTEGER NOT NULL, nomor INTEGER NOT NULL,
     fen TEXT NOT NULL, riwayat TEXT NOT NULL, dibuat REAL NOT NULL, selesai TEXT);
@@ -256,234 +264,263 @@ def jalankan_penilaian(c, kasus):
     return baca_konsensus(c, kasus["id"]), None
 
 
+
 ENDPOINT_LAMA = {"/api/nilai", "/api/kasus", "/api/kasus-baru", "/api/usul-kandidat"}
 
 
-# ------------------------------------------------------------------ HTTP
-class Penangan(BaseHTTPRequestHandler):
-    server_version = "SKAKMAT/1.0"
+# ------------------------------------------------------------------ sesi (disimpan di SQLite supaya selamat dari restart)
+def buat_sesi(c, pengguna_id):
+    token = secrets.token_urlsafe(32)
+    c.execute("DELETE FROM sesi WHERE kedaluwarsa < ?", (time.time(),))
+    c.execute("INSERT INTO sesi(token, pengguna_id, kedaluwarsa) VALUES(?,?,?)",
+              (token, pengguna_id, time.time() + SESI_DETIK))
+    return token
 
-    def log_message(self, fmt, *args):  # log ringkas
-        print("[%s] %s" % (time.strftime("%H:%M:%S"), fmt % args))
 
-    # -- util respons
-    def kirim_json(self, data, status=200, cookie=None):
-        isi = json.dumps(data, ensure_ascii=False).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(isi)))
-        self.send_header("Cache-Control", "no-store")
-        self.kepala_aman()
-        if cookie:
-            self.send_header("Set-Cookie", cookie)
-        self.end_headers()
-        self.wfile.write(isi)
+def cookie_sesi(token, umur):
+    aman = "; Secure" if COOKIE_AMAN else ""
+    return f"sesi={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={umur}{aman}"
 
-    def kepala_aman(self):
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("X-Frame-Options", "DENY")
-        self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'")
-        self.send_header("Referrer-Policy", "no-referrer")
 
-    def kesalahan(self, status, pesan):
-        self.kirim_json({"galat": pesan}, status)
+def pengguna_dari_cookie(c, token):
+    if not token:
+        return None
+    r = c.execute("SELECT p.id, p.username, p.nama, p.gaya FROM sesi s JOIN pengguna p ON p.id = s.pengguna_id "
+                  "WHERE s.token=? AND s.kedaluwarsa >= ?", (token, time.time())).fetchone()
+    return dict(r) if r else None
 
-    def baca_json(self):
-        try:
-            n = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            return None
-        if n <= 0 or n > MAKS_BODY:
-            return None
-        try:
-            data = json.loads(self.rfile.read(n))
-        except (ValueError, UnicodeDecodeError):
-            return None
-        return data if isinstance(data, dict) else None
 
-    def pengguna_login(self, c):
-        jar = cookies.SimpleCookie(self.headers.get("Cookie", ""))
-        m = jar.get("sesi")
-        if not m:
-            return None
-        info = sesi.get(m.value)
-        if not info or info[1] < time.time():
-            sesi.pop(m.value, None)
-            return None
-        r = c.execute("SELECT id, username, nama, gaya FROM pengguna WHERE id=?", (info[0],)).fetchone()
-        return dict(r) if r else None
+# ------------------------------------------------------------------ aplikasi web (FastAPI)
+app = FastAPI(title="SKAKMAT GDSS", version="2.0",
+              docs_url="/api/docs" if os.environ.get("SKAKMAT_DOCS") == "1" else None,
+              redoc_url=None, openapi_url="/api/openapi.json" if os.environ.get("SKAKMAT_DOCS") == "1" else None)
 
-    def asal_sah(self):
-        """Tolak POST lintas-situs: Origin (bila ada) harus sama dengan Host."""
-        asal = self.headers.get("Origin")
-        return not asal or urlparse(asal).netloc == self.headers.get("Host")
 
-    # -- GET
-    def do_GET(self):
-        path = urlparse(self.path).path
-        if path.startswith("/api/"):
-            return self.api("GET", path)
-        if path == "/":
-            path = "/index.html"
-        berkas = (STATIC / path.lstrip("/")).resolve()
-        if STATIC.resolve() not in berkas.parents or not berkas.is_file():
-            return self.kesalahan(404, "Tidak ditemukan.")
-        isi = berkas.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", (mimetypes.guess_type(berkas.name)[0] or "application/octet-stream") + "; charset=utf-8")
-        self.send_header("Content-Length", str(len(isi)))
-        self.kepala_aman()
-        self.end_headers()
-        self.wfile.write(isi)
+@app.on_event("startup")
+def saat_mulai():
+    siapkan_db()
+    if not mesin.pustaka_ada():
+        print("PERINGATAN: python-chess tidak terpasang. Papan bisa dilihat, tapi usulan langkah ditolak (503).", flush=True)
+    elif not mesin.path_engine():
+        print("Catatan: Stockfish tidak ditemukan. C2 diukur secara statis dan lawan memakai aturan sederhana.", flush=True)
 
-    def do_POST(self):
-        path = urlparse(self.path).path
-        if not path.startswith("/api/"):
-            return self.kesalahan(404, "Tidak ditemukan.")
-        if not self.asal_sah():
-            return self.kesalahan(403, "Asal permintaan tidak sah.")
-        self.api("POST", path)
 
-    # -- API
-    def api(self, metode, path):
+def galat(status, pesan):
+    return JSONResponse({"galat": pesan}, status_code=status)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def tangani_http(request, exc):
+    return galat(exc.status_code, "Tidak ditemukan." if exc.status_code == 404 else str(exc.detail))
+
+
+@app.middleware("http")
+async def kepala_dan_asal(request: Request, call_next):
+    """Header keamanan untuk semua respons, dan tolak POST lintas-situs (Origin harus sama dengan Host)."""
+    if request.method == "POST":
+        asal = request.headers.get("origin")
+        if asal and urlparse(asal).netloc != request.headers.get("host"):
+            resp = galat(403, "Asal permintaan tidak sah.")
+        else:
+            resp = await call_next(request)
+    else:
+        resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Content-Security-Policy"] = "default-src 'self'; style-src 'self'; script-src 'self'"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    if request.url.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+async def baca_json(request: Request):
+    body = await request.body()
+    if not body or len(body) > MAKS_BODY:
+        return None
+    try:
+        data = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def api(fungsi):
+    """Bungkus handler sinkron: buka koneksi, cek sesi, jalankan di thread pool (SQLite dan engine memblokir)."""
+    async def rute(request: Request):
+        data = await baca_json(request) if request.method == "POST" else None
+
+        def kerja():
+            with db() as c:
+                user = pengguna_dari_cookie(c, request.cookies.get("sesi"))
+                if not user:
+                    return galat(401, "Silakan masuk terlebih dahulu.")
+                return fungsi(c, user, data, request)
+        return await run_in_threadpool(kerja)
+    return rute
+
+
+def get_ronde(c, user, data, request):
+    """Keadaan ronde. Tidak pernah memanggil engine (semua angka sudah dihitung saat penilaian),
+    jadi aman dipanggil berkala. Usulan anggota lain baru terlihat setelah ronde dinilai, supaya
+    usulan tiap orang tetap independen."""
+    kasus = kasus_aktif(c)
+    status = status_usulan(c, kasus["id"])
+    saya = c.execute("SELECT langkah, san, waktu FROM usulan WHERE kasus_id=? AND pengguna_id=?",
+                     (kasus["id"], user["id"])).fetchone()
+    konsensus = baca_konsensus(c, kasus["id"])
+    bisa_usul = mesin.pustaka_ada() and not konsensus and not kasus["selesai"]
+    return JSONResponse({
+        "pengguna": user, "peserta": status, "kasus": kasus,
+        "kriteria": gdss.KRITERIA, "profil": gdss.PROFIL,
+        "semua_sudah": all(s["sudah"] for s in status),
+        "usulan_saya": {"uci": saya["langkah"], "san": saya["san"], "waktu": saya["waktu"]} if saya else None,
+        "langkah_sah": mesin.langkah_sah(kasus["fen"]) if bisa_usul else [],
+        "konsensus": konsensus,                       # ronde aktif sudah dinilai (hanya bila permainan selesai)
+        "hasil_terakhir": konsensus or hasil_terakhir(c, kasus),
+        "server": {"python_chess": mesin.pustaka_ada(), "stockfish": bool(mesin.path_engine())},
+    })
+
+
+def post_usul(c, user, data, request):
+    langkah = data.get("langkah") if data else None
+    if not isinstance(langkah, str):
+        return galat(400, "Usulan harus berupa satu langkah, mis. e2e4.")
+    if user["username"] not in {a[0] for a in AKUN}:
+        return galat(403, "Akun ini bukan anggota tim yang aktif.")
+    with _kunci_ronde:
+        kasus = kasus_aktif(c)
+        if kasus["selesai"]:
+            return galat(409, "Permainan sudah selesai: " + kasus["selesai"] + " Mulai ronde baru.")
+        if c.execute("SELECT 1 FROM konsensus WHERE kasus_id=?", (kasus["id"],)).fetchone():
+            return galat(409, "Ronde ini sudah dinilai; usulan dikunci.")
+        if not mesin.pustaka_ada():
+            return galat(503, "Server tidak bisa memeriksa langkah: pustaka python-chess tidak terpasang.")
+        m, pesan = mesin.validasi_usulan(kasus["fen"], langkah)
+        if pesan:
+            return galat(400, pesan)
+        _, san = mesin.mainkan(kasus["fen"], m.uci())
+        c.execute("INSERT OR REPLACE INTO usulan(kasus_id,pengguna_id,langkah,san,waktu) VALUES(?,?,?,?,?)",
+                  (kasus["id"], user["id"], m.uci(), san, time.time()))
+        c.commit()
+        out = {"ok": True, "usulan": {"uci": m.uci(), "san": san}, "dinilai": False}
+        if all(s["sudah"] for s in status_usulan(c, kasus["id"])):
+            hasil, g = jalankan_penilaian(c, kasus)
+            c.commit()
+            if g:
+                out["galat_penilaian"] = g[1]
+            else:
+                out.update(dinilai=True, konsensus=hasil)
+        return JSONResponse(out)
+
+
+def post_konsensus(c, user, data, request):
+    """Menjalankan ulang penilaian bila otomatisnya gagal (mis. server sempat mati). Semua akun boleh."""
+    with _kunci_ronde:
+        kasus = kasus_aktif(c)
+        hasil, g = jalankan_penilaian(c, kasus)
+        c.commit()
+    if g:
+        return galat(*g)
+    return JSONResponse({"ok": True, "konsensus": hasil})
+
+
+def post_ulang(c, user, data, request):
+    """Ronde baru: mulai permainan baru dari posisi awal. Semua akun boleh; riwayat lama tetap tersimpan."""
+    with _kunci_ronde:
+        permainan_baru(c)
+        c.commit()
+    return JSONResponse({"ok": True, "kasus": kasus_aktif(c)})
+
+
+def post_keluar(c, user, data, request):
+    c.execute("DELETE FROM sesi WHERE token=?", (request.cookies.get("sesi"),))
+    resp = JSONResponse({"ok": True})
+    resp.headers["Set-Cookie"] = cookie_sesi("", 0)
+    return resp
+
+
+app.add_api_route("/api/ronde", api(get_ronde), methods=["GET"])
+app.add_api_route("/api/usul", api(post_usul), methods=["POST"])
+app.add_api_route("/api/konsensus", api(post_konsensus), methods=["POST"])
+app.add_api_route("/api/ulang", api(post_ulang), methods=["POST"])
+app.add_api_route("/api/keluar", api(post_keluar), methods=["POST"])
+
+
+@app.get("/api/me")
+async def get_me(request: Request):
+    def kerja():
         with db() as c:
-            if metode == "POST" and path == "/api/login":
-                return self.login(c)
-            user = self.pengguna_login(c)
-            if path == "/api/me" and metode == "GET":
-                return self.kirim_json({"pengguna": user})
-            if not user:
-                return self.kesalahan(401, "Silakan masuk terlebih dahulu.")
-            if path in ENDPOINT_LAMA:
-                return self.kesalahan(410, "Endpoint ini milik alur lama (penilaian manual) dan tidak dipakai lagi. "
-                                           "Usulkan langkah lewat papan: POST /api/usul.")
-            rute = {("GET", "/api/ronde"): self.get_ronde,
-                    ("POST", "/api/usul"): self.post_usul,
-                    ("POST", "/api/konsensus"): self.post_konsensus,
-                    ("POST", "/api/ulang"): self.post_ulang,
-                    ("POST", "/api/keluar"): self.post_keluar}
-            fn = rute.get((metode, path))
-            if not fn:
-                return self.kesalahan(404, "Tidak ditemukan.")
-            return fn(c, user)
+            return JSONResponse({"pengguna": pengguna_dari_cookie(c, request.cookies.get("sesi"))})
+    return await run_in_threadpool(kerja)
 
-    def login(self, c):
-        data = self.baca_json()
-        if not data or not isinstance(data.get("username"), str) or not isinstance(data.get("sandi"), str):
-            return self.kesalahan(400, "Isi nama pengguna dan kata sandi.")
-        kunci = (self.client_address[0], data["username"].lower())
+
+@app.post("/api/login")
+async def post_login(request: Request):
+    data = await baca_json(request)
+    if not data or not isinstance(data.get("username"), str) or not isinstance(data.get("sandi"), str):
+        return galat(400, "Isi nama pengguna dan kata sandi.")
+    ip = request.client.host if request.client else "?"
+
+    def kerja():
+        kunci = (ip, data["username"].lower())
         gagal, sampai = percobaan.get(kunci, (0, 0))
         if gagal >= GAGAL_MAKS and sampai > time.time():
-            return self.kesalahan(429, "Terlalu banyak percobaan. Coba lagi sebentar.")
-        r = c.execute("SELECT * FROM pengguna WHERE username=?", (data["username"].lower(),)).fetchone()
-        sah = False
-        if r:
-            sah = hmac.compare_digest(hash_sandi(data["sandi"], r["garam"]), r["sandi"])
-        else:
-            hash_sandi(data["sandi"], b"0" * 16)   # samakan waktu proses
-        if not sah:
-            percobaan[kunci] = (gagal + 1, time.time() + KUNCI_DETIK)
-            return self.kesalahan(401, "Nama pengguna atau kata sandi salah.")
-        percobaan.pop(kunci, None)
-        token = secrets.token_urlsafe(32)
-        sesi[token] = (r["id"], time.time() + SESI_DETIK)
-        cookie = f"sesi={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESI_DETIK}"
-        self.kirim_json({"pengguna": {"id": r["id"], "username": r["username"], "nama": r["nama"],
-                                      "gaya": r["gaya"]}}, cookie=cookie)
+            return galat(429, "Terlalu banyak percobaan. Coba lagi sebentar.")
+        with db() as c:
+            r = c.execute("SELECT * FROM pengguna WHERE username=?", (data["username"].lower(),)).fetchone()
+            sah = False
+            if r:
+                sah = hmac.compare_digest(hash_sandi(data["sandi"], r["garam"]), r["sandi"])
+            else:
+                hash_sandi(data["sandi"], b"0" * 16)   # samakan waktu proses
+            if not sah:
+                percobaan[kunci] = (gagal + 1, time.time() + KUNCI_DETIK)
+                return galat(401, "Nama pengguna atau kata sandi salah.")
+            percobaan.pop(kunci, None)
+            token = buat_sesi(c, r["id"])
+        resp = JSONResponse({"pengguna": {"id": r["id"], "username": r["username"], "nama": r["nama"],
+                                          "gaya": r["gaya"]}})
+        resp.headers["Set-Cookie"] = cookie_sesi(token, SESI_DETIK)
+        return resp
+    return await run_in_threadpool(kerja)
 
-    def post_keluar(self, c, user):
-        jar = cookies.SimpleCookie(self.headers.get("Cookie", ""))
-        if "sesi" in jar:
-            sesi.pop(jar["sesi"].value, None)
-        self.kirim_json({"ok": True}, cookie="sesi=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0")
 
-    def get_ronde(self, c, user):
-        """Keadaan ronde. Tidak pernah memanggil engine (semua angka sudah dihitung saat penilaian),
-        jadi aman dipanggil berkala. Usulan anggota lain baru terlihat setelah ronde dinilai, supaya
-        usulan tiap orang tetap independen."""
-        kasus = kasus_aktif(c)
-        status = status_usulan(c, kasus["id"])
-        saya = c.execute("SELECT langkah, san, waktu FROM usulan WHERE kasus_id=? AND pengguna_id=?",
-                         (kasus["id"], user["id"])).fetchone()
-        konsensus = baca_konsensus(c, kasus["id"])
-        bisa_usul = mesin.pustaka_ada() and not konsensus and not kasus["selesai"]
-        return self.kirim_json({
-            "pengguna": user, "peserta": status, "kasus": kasus,
-            "kriteria": gdss.KRITERIA, "profil": gdss.PROFIL,
-            "semua_sudah": all(s["sudah"] for s in status),
-            "usulan_saya": {"uci": saya["langkah"], "san": saya["san"], "waktu": saya["waktu"]} if saya else None,
-            "langkah_sah": mesin.langkah_sah(kasus["fen"]) if bisa_usul else [],
-            "konsensus": konsensus,                       # ronde aktif sudah dinilai (hanya bila permainan selesai)
-            "hasil_terakhir": konsensus or hasil_terakhir(c, kasus),
-            "server": {"python_chess": mesin.pustaka_ada(), "stockfish": bool(mesin.path_engine())},
-        })
+@app.api_route("/api/{sisa:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def api_lain(sisa: str, request: Request):
+    """Endpoint alur lama dijawab 410 (bagi yang sudah login); selain itu 401 atau 404."""
+    jalur = "/api/" + sisa
 
-    def post_usul(self, c, user):
-        data = self.baca_json()
-        langkah = data.get("langkah") if data else None
-        if not isinstance(langkah, str):
-            return self.kesalahan(400, "Usulan harus berupa satu langkah, mis. e2e4.")
-        if user["username"] not in {a[0] for a in AKUN}:
-            return self.kesalahan(403, "Akun ini bukan anggota tim yang aktif.")
-        with _kunci_ronde:
-            kasus = kasus_aktif(c)
-            if kasus["selesai"]:
-                return self.kesalahan(409, "Permainan sudah selesai: " + kasus["selesai"] + " Mulai ronde baru.")
-            if c.execute("SELECT 1 FROM konsensus WHERE kasus_id=?", (kasus["id"],)).fetchone():
-                return self.kesalahan(409, "Ronde ini sudah dinilai; usulan dikunci.")
-            if not mesin.pustaka_ada():
-                return self.kesalahan(503, "Server tidak bisa memeriksa langkah: pustaka python-chess tidak terpasang.")
-            m, pesan = mesin.validasi_usulan(kasus["fen"], langkah)
-            if pesan:
-                return self.kesalahan(400, pesan)
-            _, san = mesin.mainkan(kasus["fen"], m.uci())
-            c.execute("INSERT OR REPLACE INTO usulan(kasus_id,pengguna_id,langkah,san,waktu) VALUES(?,?,?,?,?)",
-                      (kasus["id"], user["id"], m.uci(), san, time.time()))
-            c.commit()
-            out = {"ok": True, "usulan": {"uci": m.uci(), "san": san}, "dinilai": False}
-            if all(s["sudah"] for s in status_usulan(c, kasus["id"])):
-                hasil, galat = jalankan_penilaian(c, kasus)
-                c.commit()
-                if galat:
-                    out["galat_penilaian"] = galat[1]
-                else:
-                    out.update(dinilai=True, konsensus=hasil)
-            return self.kirim_json(out)
+    def kerja():
+        with db() as c:
+            user = pengguna_dari_cookie(c, request.cookies.get("sesi"))
+        if not user:
+            return galat(401, "Silakan masuk terlebih dahulu.")
+        if jalur in ENDPOINT_LAMA:
+            return galat(410, "Endpoint ini milik alur lama (penilaian manual) dan tidak dipakai lagi. "
+                              "Usulkan langkah lewat papan: POST /api/usul.")
+        return galat(404, "Tidak ditemukan.")
+    return await run_in_threadpool(kerja)
 
-    def post_konsensus(self, c, user):
-        """Menjalankan ulang penilaian bila otomatisnya gagal (mis. server sempat mati). Semua akun boleh."""
-        with _kunci_ronde:
-            kasus = kasus_aktif(c)
-            hasil, galat = jalankan_penilaian(c, kasus)
-            c.commit()
-        if galat:
-            return self.kesalahan(*galat)
-        return self.kirim_json({"ok": True, "konsensus": hasil})
 
-    def post_ulang(self, c, user):
-        """Ronde baru: mulai permainan baru dari posisi awal. Semua akun boleh; riwayat lama tetap tersimpan."""
-        with _kunci_ronde:
-            permainan_baru(c)
-            c.commit()
-        return self.kirim_json({"ok": True, "kasus": kasus_aktif(c)})
+@app.get("/{jalur:path}", include_in_schema=False)
+async def berkas_statis(jalur: str):
+    """Front end statis (static/). Path di luar folder itu ditolak."""
+    berkas = (STATIC / (jalur or "index.html")).resolve()
+    if STATIC.resolve() not in berkas.parents or not berkas.is_file():
+        return galat(404, "Tidak ditemukan.")
+    return FileResponse(berkas)
 
 
 def main():
     ap = argparse.ArgumentParser(description="SKAKMAT GDSS")
-    ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--host", default=os.environ.get("SKAKMAT_HOST", "127.0.0.1"))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("SKAKMAT_PORT", "8000")))
     a = ap.parse_args()
-    siapkan_db()
-    if not mesin.pustaka_ada():
-        print("PERINGATAN: python-chess tidak terpasang. Papan bisa dilihat, tapi usulan langkah ditolak (503).")
-    elif not mesin.path_engine():
-        print("Catatan: Stockfish tidak ditemukan. C2 diukur secara statis dan lawan memakai aturan sederhana.")
-    srv = ThreadingHTTPServer((a.host, a.port), Penangan)
-    print(f"SKAKMAT berjalan di http://{a.host}:{a.port}  (Ctrl+C untuk berhenti)")
-    try:
-        srv.serve_forever()
-    except KeyboardInterrupt:
-        print("\nBerhenti.")
+    print(f"SKAKMAT berjalan di http://{a.host}:{a.port}  (Ctrl+C untuk berhenti)", flush=True)
+    # Satu proses: kunci ronde (threading.Lock) dan batas percobaan login hidup di memori proses ini.
+    uvicorn.run(app, host=a.host, port=a.port, log_level="warning",
+                proxy_headers=True, forwarded_allow_ips=os.environ.get("SKAKMAT_PROXY_IPS", "127.0.0.1"))
 
 
 if __name__ == "__main__":

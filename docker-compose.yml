@@ -1,0 +1,13 @@
+services:
+  skakmat:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"     # hanya lokal; hadapkan ke internet lewat reverse proxy HTTPS (lihat docs/ARSITEKTUR.md)
+    environment:
+      SKAKMAT_COOKIE_SECURE: "${SKAKMAT_COOKIE_SECURE:-0}"   # isi 1 bila dilayani lewat HTTPS
+      SKAKMAT_PROXY_IPS: "${SKAKMAT_PROXY_IPS:-127.0.0.1}"
+    volumes:
+      - skakmat-data:/data
+volumes:
+  skakmat-data:

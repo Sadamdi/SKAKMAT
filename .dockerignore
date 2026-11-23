@@ -1,0 +1,8 @@
+.venv/
+.git/
+__pycache__/
+*.db
+*.db.lama-*
+bukti/
+docs/
+test_*.py
