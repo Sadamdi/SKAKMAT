@@ -81,9 +81,21 @@ def tes_kriteria():
     if pakai_engine:
         cek(all(x["engine"] and x["engine"]["kedalaman"] == mesin.KEDALAMAN_KRITERIA and not x["engine"]["terpotong_waktu"]
                 for x in a["alternatif"]), f"analisis engine mencapai kedalaman {mesin.KEDALAMAN_KRITERIA} (tidak terpotong waktu)")
-        t = time.time()
-        mesin.nilai_kriteria(GIUOCO, langkah)
-        cek(time.time() - t < 0.2, f"permintaan ulang memakai cache ({time.time() - t:.3f} s)")
+        # Cache diuji lewat jumlah panggilan ke engine, bukan lewat waktu (waktu bergantung beban mesin).
+        mesin._cache_kriteria.clear()
+        pertama = mesin.nilai_kriteria(GIUOCO, langkah)
+        terpotong = any(x["engine"] and x["engine"]["terpotong_waktu"] for x in pertama["alternatif"])
+        asli = mesin._analisis_banyak
+        panggilan = []
+        mesin._analisis_banyak = lambda *a, **k: (panggilan.append(1), asli(*a, **k))[1]
+        try:
+            mesin.nilai_kriteria(GIUOCO, langkah)
+        finally:
+            mesin._analisis_banyak = asli
+        if terpotong:
+            lewati("cache: analisis pertama terpotong batas waktu (mesin sedang sibuk), hasil tidak disimpan")
+        else:
+            cek(not panggilan, "permintaan ulang memakai cache (engine tidak dipanggil lagi)")
     # jalur statis (tanpa engine) juga deterministik
     lama = os.environ.get("SKAKMAT_STOCKFISH")
     os.environ["SKAKMAT_STOCKFISH"] = "mati"

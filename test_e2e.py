@@ -173,6 +173,24 @@ def alur(klien):
         "konsensus Ketua membuka tepat satu ronde berikutnya")
 
 
+def sandi_dari_lingkungan():
+    """Server yang dibuka lewat internet memakai kata sandi acak dari SKAKMAT_SANDI_<USERNAME>."""
+    tmp = Path(tempfile.mkdtemp())
+    db = tmp / "sandi.db"
+    for ulang, sandi in enumerate(("RahasiaBaru-1", "RahasiaLagi-2")):   # kedua: basis data sudah ada
+        srv = nyalakan(db, env_tambahan={"SKAKMAT_SANDI_ANGGOTA1": sandi})
+        try:
+            k = Klien()
+            st_lama, _ = k.minta("/api/login", {"username": "anggota1", "sandi": "anggota123-1"})
+            st_baru, _ = k.minta("/api/login", {"username": "anggota1", "sandi": sandi})
+            st_lain, _ = Klien().minta("/api/login", {"username": "anggota2", "sandi": "anggota123-2"})
+            cek(st_lama == 401 and st_baru == 200 and st_lain == 200,
+                f"kata sandi dari lingkungan (start ke-{ulang + 1}): sandi bawaan ditolak, sandi baru diterima, akun lain tetap bawaan")
+        finally:
+            srv.terminate()
+            srv.wait(timeout=10)
+
+
 def main():
     try:
         import chess  # noqa: F401
@@ -207,6 +225,7 @@ def main():
         srv.wait(timeout=10)
     migrasi()
     akhir_permainan()
+    sandi_dari_lingkungan()
     print("SEMUA TES UJUNG KE UJUNG LOLOS")
 
 

@@ -148,12 +148,19 @@ def siapkan_db():
         for username, nama, gaya, sandi in AKUN:
             if gaya not in gdss.PROFIL:
                 raise SystemExit(f"Gaya '{gaya}' untuk akun {username} tidak dikenal. Pilihan: {', '.join(gdss.PROFIL)}.")
+            # SKAKMAT_SANDI_<USERNAME> (mis. SKAKMAT_SANDI_ANGGOTA1) menggantikan kata sandi bawaan; dipakai
+            # saat server dibuka lewat internet supaya akun demo tidak bisa ditebak.
+            sandi_env = os.environ.get("SKAKMAT_SANDI_" + username.upper())
             if c.execute("SELECT 1 FROM pengguna WHERE username=?", (username,)).fetchone():
                 c.execute("UPDATE pengguna SET nama=?, gaya=? WHERE username=?", (nama, gaya, username))
+                if sandi_env:
+                    garam = secrets.token_bytes(16)
+                    c.execute("UPDATE pengguna SET garam=?, sandi=? WHERE username=?",
+                              (garam, hash_sandi(sandi_env, garam), username))
             else:
                 garam = secrets.token_bytes(16)
                 c.execute("INSERT INTO pengguna(username,nama,gaya,garam,sandi) VALUES(?,?,?,?,?)",
-                          (username, nama, gaya, garam, hash_sandi(sandi, garam)))
+                          (username, nama, gaya, garam, hash_sandi(sandi_env or sandi, garam)))
         if c.execute("SELECT COUNT(*) FROM kasus").fetchone()[0] == 0:
             permainan_baru(c)
 

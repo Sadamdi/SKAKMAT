@@ -47,6 +47,24 @@ Menjalankan tes:
 .venv\Scripts\python test_e2e.py
 ```
 
+## Main bareng dari perangkat lain (alamat internet sementara)
+
+Satu orang (pemilik laptop) menyalakan server; **teman tidak perlu memasang atau menjalankan apa pun**,
+cukup membuka alamat di browser mereka, di perangkat dan jaringan mana pun (tidak harus satu Wi-Fi).
+
+```powershell
+winget install --id Cloudflare.cloudflared      # sekali saja
+cd "D:\adam kuliah\Semester 5\Information System Praktikum\UAS\SKAKMAT"
+powershell -ExecutionPolicy Bypass -File .\jalankan_online.ps1
+```
+
+Skrip menyalakan server, membuka terowongan gratis Cloudflare (Quick Tunnel), lalu mencetak satu alamat
+`https://....trycloudflare.com` dan kata sandi acak untuk tiga akun. Bagikan alamat itu; tiap orang masuk
+dengan akunnya sendiri (boleh beda browser). Alamat dan kata sandi berubah setiap skrip dijalankan, dan semuanya
+mati begitu skrip dihentikan (Ctrl+C). Laptop pemilik harus tetap menyala dan terhubung ke internet.
+
+Variabel `SKAKMAT_SANDI_ANGGOTA1` (dan `..2`, `..3`) mengganti kata sandi bawaan; skrip di atas mengisinya otomatis.
+
 ## Cara menjalankan
 
 Kebutuhan:
