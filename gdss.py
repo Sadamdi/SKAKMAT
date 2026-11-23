@@ -87,3 +87,73 @@ def borda(hasil_per_penilai, urutan_pemutus=0):
         rank[i] = r
     return {"bobot_borda": bobot, "poin": poin, "nilai": nilai, "rank": rank,
             "pemenang": urut[0], "hitung_peringkat": hitung_peringkat}
+
+
+# ------------------------------------------------------------------ gaya main (profil bobot)
+# Nilai C1-C5 dihitung mesin dari papan, jadi semua decision maker melihat angka yang sama. Yang membuat
+# peringkat mereka berbeda adalah GAYA MAIN: tiap akun memberi bobot berbeda pada kriteria yang sama
+# (laporan: "ada yang condong menyerang, ada pula yang memilih bertahan"). TOPSIS dijalankan sekali per
+# decision maker dengan bobot gayanya, lalu Borda menggabungkan peringkat-peringkat itu.
+# Urutan bobot = urutan KRITERIA (C1..C5). Profil "seimbang" sama dengan bobot KRITERIA di atas.
+PROFIL = {
+    "menyerang": {"nama": "Menyerang", "bobot": [20, 15, 20, 30, 15]},
+    "seimbang": {"nama": "Seimbang", "bobot": [25, 20, 20, 20, 15]},
+    "bertahan": {"nama": "Bertahan", "bobot": [30, 30, 15, 10, 15]},
+}
+
+
+def kriteria_profil(gaya):
+    """Salinan KRITERIA dengan bobot gaya tersebut (jenis benefit/cost tidak berubah)."""
+    return [{**k, "bobot": b} for k, b in zip(KRITERIA, PROFIL[gaya]["bobot"])]
+
+
+def validasi_matriks(matriks):
+    """Matriks keputusan dari mesin: 1..n baris, tiap baris 5 bilangan 1..5 (boleh pecahan)."""
+    if not isinstance(matriks, list) or not matriks:
+        return "Matriks keputusan kosong."
+    for baris in matriks:
+        if not isinstance(baris, list) or len(baris) != len(KRITERIA):
+            return "Setiap alternatif harus punya nilai pada semua kriteria."
+        for v in baris:
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not NILAI_MIN <= v <= NILAI_MAKS:
+                return f"Nilai harus bilangan {NILAI_MIN} sampai {NILAI_MAKS}."
+    return None
+
+
+def konsensus_gaya(matriks, gaya_penilai, dukungan=None):
+    """TOPSIS per decision maker (bobot = gayanya) lalu konsensus Borda.
+
+    matriks[i][j]   : nilai alternatif i pada kriteria j (sama untuk semua penilai; dihitung mesin).
+    gaya_penilai    : daftar gaya, satu per decision maker (kunci PROFIL).
+    dukungan[i]     : berapa decision maker yang mengusulkan alternatif i (usulan ganda digabung).
+
+    Poin dan nilai Borda dihitung oleh borda() yang sama dengan sebelumnya. Hanya aturan seri yang
+    berbeda karena tidak ada lagi jabatan tertinggi: bila nilai Borda sama, menang yang (1) didukung
+    lebih banyak usulan, lalu (2) jumlah peringkat TOPSIS-nya lebih kecil, lalu (3) diusulkan lebih dulu.
+    """
+    pesan = validasi_matriks(matriks)
+    if pesan:
+        raise ValueError(pesan)
+    n = len(matriks)
+    dukungan = list(dukungan) if dukungan else [1] * n
+    # peringkat() memutus nilai V yang sama menurut indeks. Supaya seri itu diputus menurut dukungan
+    # (bukan kebetulan urutan), alternatif diurutkan dulu: dukungan terbanyak, lalu yang diusulkan lebih dulu.
+    # Hasil dipetakan kembali ke urutan asli sebelum dikembalikan.
+    p = sorted(range(n), key=lambda i: (-dukungan[i], i))       # p[posisi] = indeks asli
+    balik = [p.index(i) for i in range(n)]                       # balik[indeks asli] = posisi
+    m = [matriks[i] for i in p]
+    hasil = []
+    for g in gaya_penilai:
+        h = topsis(m, kriteria_profil(g))
+        hasil.append({**h, **{kunci: [h[kunci][balik[i]] for i in range(n)]
+                              for kunci in ("r", "y", "d_plus", "d_min", "v", "rank")}})
+    k = borda(hasil)
+    jumlah_peringkat = [sum(h["rank"][i] for h in hasil) for i in range(n)]
+    urut = sorted(range(n), key=lambda i: (-round(k["nilai"][i], 12), -dukungan[i], jumlah_peringkat[i], i))
+    rank = [0] * n
+    for r, i in enumerate(urut, start=1):
+        rank[i] = r
+    k.update(rank=rank, pemenang=urut[0], dukungan=dukungan, jumlah_peringkat=jumlah_peringkat,
+             aturan_seri="dukungan usulan, lalu jumlah peringkat TOPSIS, lalu urutan usulan")
+    return {"topsis": hasil, "borda": k, "pemenang": urut[0],
+            "pemenang_per_penilai": [h["rank"].index(1) for h in hasil]}
