@@ -3,13 +3,19 @@
 Sistem Kolaborasi Analis untuk Keputusan Melangkah Antar Tim. Project akhir Praktikum Sistem
 Informasi, Kelompok 2, Kelas B.
 
-Tiga decision maker membuka papan yang sama dan memainkan bidak putih bersama. Tiap ronde, setiap
-anggota mengusulkan satu langkah dengan **menggerakkan bidak di papan**. Begitu ketiga usulan masuk,
-**penilaian individual** tiap anggota langsung tersedia: nilai C1–C5 diukur mesin dari posisi papan,
-lalu TOPSIS dijalankan untuk tiap anggota dengan bobot gaya mainnya. Sesudah itu **Ketua (akun dengan
-jabatan tertinggi) menjalankan konsensus dengan voting Borda** yang menggabungkan ketiga peringkat
-menjadi satu keputusan kelompok. Langkah pemenang dimainkan, lawan membalas, dan ronde berikutnya
-dimulai. Semua akun dapat melihat hasil konsensus.
+Pengguna **mendaftar atau masuk**, lalu **membuat pertandingan** atau **bergabung** ke pertandingan yang ada
+(maksimal 3 pemain per pertandingan, bisa banyak pertandingan sekaligus). Tim memainkan bidak putih melawan
+komputer:
+
+- **Giliran tim:** tiap anggota mengusulkan satu langkah dengan menggerakkan bidak di papan. Begitu semua
+  usulan masuk, **penilaian individual** tiap anggota tersedia (nilai C1 sampai C5 diukur mesin, lalu **TOPSIS**
+  dengan bobot gaya main masing-masing). Sesudah itu **Ketua (pembuat pertandingan, jabatan tertinggi)
+  menjalankan konsensus voting Borda** dan langkah pemenang dimainkan.
+- **Giliran lawan:** komputer membalas dengan algoritma catur biasa (Stockfish).
+- Pemain bisa **keluar** atau **bergabung** kapan saja. Bila semua pemain keluar (atau tidak aktif 2 menit),
+  pertandingan **berakhir otomatis**. Bila Ketua keluar, anggota yang bergabung paling awal menjadi Ketua.
+
+Penjelasan rinci cara kerja dan bukti pengujiannya ada di [docs/CARA_KERJA.md](docs/CARA_KERJA.md).
 
 ## Arsitektur
 
@@ -134,39 +140,45 @@ sebelumnya (skema 1: Kapten dan penilaian manual) masih ada, file itu **dicadang
 `skakmat.db.lama-<tanggal>-<jam>` lalu diganti skema baru — aplikasi tidak mati karena basis data
 lama. Hapus `skakmat.db` untuk mengulang dari awal.
 
-## Akun
+## Akun dan pertandingan
 
-| Akun | Kata sandi | Jabatan | Gaya main | Bobot C1–C5 |
-|---|---|---|---|---|
-| anggota1 | anggota123-1 | **Ketua** (jabatan tertinggi) | Menyerang | 20 · 15 · 20 · 30 · 15 |
-| anggota2 | anggota123-2 | Anggota | Seimbang | 25 · 20 · 20 · 20 · 15 |
-| anggota3 | anggota123-3 | Anggota | Bertahan | 30 · 30 · 15 · 10 · 15 |
+Akun baru dibuat lewat **Daftar akun baru** di halaman masuk (nama pengguna 3 sampai 20 karakter huruf kecil,
+angka, atau garis bawah; kata sandi minimal 6 karakter). Tiga akun demo dibuat otomatis agar mudah dicoba:
 
-Ketiganya sama-sama mengusulkan langkah dan menerima hasil. Yang membedakan: **Ketua** satu-satunya yang
-boleh menjalankan konsensus Borda (konstanta `KETUA` di `app.py`), dan tiap akun punya gaya main
-sendiri. Kata sandi di atas hanya akun demo; ubah pada daftar `AKUN` di `app.py` sebelum basis data
-dibuat.
+| Akun demo | Kata sandi |
+|---|---|
+| anggota1 | anggota123-1 |
+| anggota2 | anggota123-2 |
+| anggota3 | anggota123-3 |
+
+Jabatan dan gaya main **bukan** melekat pada akun, tetapi pada pertandingan:
+
+| Peran di pertandingan | Cara mendapatkannya |
+|---|---|
+| **Ketua** (jabatan tertinggi) | Pembuat pertandingan. Bila Ketua keluar, anggota yang bergabung paling awal naik menjadi Ketua. Hanya Ketua yang boleh menjalankan konsensus. |
+| Gaya main | Dipilih saat membuat atau bergabung; unik per pertandingan. Menyerang: bobot C1 sampai C5 = 20/15/20/30/15; Seimbang = 25/20/20/20/15; Bertahan = 30/30/15/10/15. |
+
+Kata sandi demo dapat diganti dengan variabel `SKAKMAT_SANDI_ANGGOTA1` (dan `..2`, `..3`).
 
 ## Alur penggunaan
 
-1. **Masuk** dengan salah satu akun. Papan, ronde, dan riwayat langkah langsung tampil.
-2. **Usulkan langkah dengan menggerakkan bidak.** Klik bidak putih (petak tujuan yang sah langsung
-   ditandai), lalu klik tujuan. Bisa juga diseret. Dengan keyboard: Tab ke bidak, Enter untuk
-   memilih, Tab ke petak tujuan, Enter untuk mengusulkan, Esc untuk batal. Langkah ilegal ditolak
-   server dan bidak kembali ke tempatnya dengan pesan singkat.
-3. **Usulan masih bisa diganti** (dengan menggerakkan bidak lain) sampai anggota terakhir mengusulkan.
-   Usulan anggota lain baru terlihat setelah ronde dinilai, supaya tiap usulan tetap independen.
-4. **Begitu usulan ketiga masuk, penilaian individual muncul otomatis** untuk semua akun: nilai C1–C5
-   tiap usulan dan satu tabel TOPSIS per anggota. Usulan dikunci pada tahap ini.
-5. **Ketua menekan "Jalankan konsensus (voting Borda)".** Akun lain melihat "menunggu Ketua" dan tidak
-   punya tombol itu (server menolak dengan 403). Semua akun lalu melihat tabel Borda, animasi
-   penggabungan, dan pembanding engine.
-6. **Langkah pemenang dimainkan, lawan membalas** (Stockfish), lalu ronde berikutnya siap diisi.
-   Riwayat langkah diperbarui. Bila permainan selesai (skakmat/seri), tombol **Ronde baru** memulai
-   permainan lagi dari posisi awal; riwayat permainan sebelumnya tetap tersimpan di server.
+1. **Daftar atau masuk.** Setelah masuk, pemain berada di **lobi**: daftar pertandingan yang sedang berlangsung
+   (anggota, gaya yang masih tersedia, kode 5 karakter), form **Buat pertandingan**, dan **Gabung dengan kode**.
+2. **Buat atau gabung.** Pembuat menjadi Ketua. Satu pemain hanya boleh berada di satu pertandingan; pertandingan
+   penuh (3 pemain) tidak bisa dimasuki. Pemain baru boleh bergabung kapan saja, termasuk di tengah ronde.
+3. **Usulkan langkah dengan menggerakkan bidak.** Klik bidak putih (petak tujuan yang sah ditandai), lalu klik
+   tujuan. Bisa juga diseret. Dengan keyboard: Tab ke bidak, Enter, Tab ke petak tujuan, Enter, Esc untuk batal.
+   Usulan masih bisa diganti sampai anggota terakhir mengusulkan, dan usulan anggota lain belum terlihat.
+4. **Penilaian individual muncul otomatis** begitu semua anggota yang ada sudah mengusulkan: nilai C1 sampai C5
+   dan satu tabel TOPSIS per anggota. Usulan dikunci pada tahap ini.
+5. **Ketua menekan "Jalankan konsensus (voting Borda)".** Akun lain melihat "menunggu Ketua" (server menolak
+   mereka dengan 403). Semua akun lalu melihat tabel Borda dan pembanding engine.
+6. **Lawan membalas** dengan catur biasa (Stockfish), dan ronde berikutnya dibuka.
+7. **Keluar.** Tombol *Keluar dari pertandingan* (kembali ke lobi), atau *Keluar* akun. Pemain yang tidak mengirim
+   permintaan apa pun selama 2 menit juga dianggap keluar. Anggota yang keluar tidak ditunggu lagi; bila ia
+   Ketua, jabatan berpindah. Bila tidak ada pemain tersisa, pertandingan berakhir.
 
-Tidak ada form isian di aplikasi ini: tidak ada dropdown nilai, tidak ada isian FEN, tidak ada
-"buat kasus baru", tidak ada kotak teks. Satu-satunya input adalah gerakan bidak.
+Satu-satunya input permainan adalah gerakan bidak (selain login, pendaftaran, dan menu lobi).
 
 ## Metode
 
@@ -303,16 +315,20 @@ Tes:
 
 | Metode | Path | Keterangan |
 |---|---|---|
+| POST | `/api/daftar` | `{"username", "nama", "sandi"}` → akun baru, langsung masuk (400 bila tidak valid, 409 bila nama pengguna terpakai) |
 | POST | `/api/login` | `{"username", "sandi"}` → set cookie sesi |
+| POST | `/api/keluar` | keluar akun; pemain otomatis keluar dari pertandingannya |
 | GET | `/api/me` | pengguna yang sedang masuk |
-| GET | `/api/ronde` | keadaan ronde: kasus (FEN, nomor, riwayat, selesai), peserta + status usulan, usulan sendiri, langkah sah, hasil terakhir, status server. Aman dipanggil berkala — tidak pernah memanggil engine. |
-| POST | `/api/usul` | `{"langkah": "e2e4"}` → usulan satu langkah, tervalidasi legalitasnya. Bila ini usulan terakhir, respons berisi `dinilai: true` dan hasil konsensus. |
-| POST | `/api/konsensus` | **hanya Ketua (403 untuk akun lain)**: voting Borda atas penilaian individual semua anggota, lalu langkah pemenang dimainkan. Ditolak 409 bila belum semua anggota mengusulkan atau ronde sudah dikonsensuskan. |
-| POST | `/api/ulang` | ronde baru: permainan baru dari posisi awal, riwayat lama tetap tersimpan |
-| POST | `/api/keluar` | hapus sesi |
+| GET | `/api/lobi` | pertandingan yang berlangsung (anggota, gaya tersedia, penuh atau tidak) dan pertandingan milik pemain |
+| POST | `/api/pertandingan/buat` | `{"nama", "gaya"}` → pembuat menjadi Ketua |
+| POST | `/api/pertandingan/gabung` | `{"id" atau "kode", "gaya"}` → 409 bila penuh, sudah berakhir, gaya terpakai, atau pemain masih di pertandingan lain |
+| POST | `/api/pertandingan/keluar` | keluar dari pertandingan; mengakhirinya bila pemain terakhir |
+| GET | `/api/ronde` | keadaan ronde pertandingan pemain (`pertandingan: null` bila di lobi): kasus, peserta + status usulan, usulan sendiri, langkah sah, penilaian individual, hasil terakhir. Tidak pernah memanggil engine. |
+| POST | `/api/usul` | `{"langkah": "e2e4"}` → usulan satu langkah, tervalidasi legalitasnya. Bila ini usulan terakhir, respons berisi `penilaian_siap: true`. |
+| POST | `/api/konsensus` | **hanya Ketua pertandingan (403 untuk lainnya)**: voting Borda atas penilaian individual, lalu langkah pemenang dimainkan dan lawan membalas. 409 bila belum lengkap atau sudah dikonsensuskan. |
+| POST | `/api/ulang` | permainan baru dari posisi awal di pertandingan yang sama; riwayat lama tersimpan |
 
-Endpoint alur lama (`/api/nilai`, `/api/kasus`, `/api/kasus-baru`, `/api/usul-kandidat`) sudah tidak
-dipakai dan menjawab **410 Gone** dengan penjelasan.
+Endpoint alur lama (`/api/nilai`, `/api/kasus`, `/api/kasus-baru`, `/api/usul-kandidat`) menjawab **410 Gone**.
 
 Semua endpoint: pemeriksaan asal permintaan (Origin), cek sesi, validasi tipe masukan, dan kueri
 berparameter.

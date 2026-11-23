@@ -1,16 +1,17 @@
 """SKAKMAT - Sistem Kolaborasi Analis untuk Keputusan Melangkah Antar Tim.
 
-GDSS catur konsultasi: tiga akun setara memainkan bidak putih bersama. Tiap ronde, setiap anggota
-mengusulkan satu langkah dengan menggerakkan bidak di papan (satu-satunya input pengguna). Setelah
-ketiga usulan masuk, server otomatis:
-  1. menggabungkan usulan yang sama menjadi satu alternatif (dukungan dicatat),
-  2. mengukur C1-C5 tiap alternatif dari posisi setelah langkah (mesin.py: python-chess + Stockfish),
-  3. menjalankan TOPSIS sekali per anggota dengan bobot gaya mainnya (menyerang/seimbang/bertahan),
-  4. menggabungkan tiga peringkat itu dengan voting Borda (gdss.py),
-  5. memainkan langkah pemenang, lalu balasan lawan (Stockfish), dan membuka ronde berikutnya.
+GDSS catur konsultasi. Pengguna mendaftar atau masuk, lalu membuat atau bergabung ke sebuah pertandingan
+(maksimal 3 pemain). Tim memainkan bidak putih melawan komputer:
 
-python-chess wajib untuk alur bermain; Stockfish opsional (tanpa Stockfish, C2 diukur secara statis
-dan lawan memakai aturan sederhana; keduanya ditandai di tampilan).
+  giliran tim    : tiap anggota mengusulkan satu langkah (menggerakkan bidak) -> penilaian individual (C1-C5 diukur
+                   mesin + TOPSIS per anggota dengan bobot gayanya) -> Ketua (pembuat pertandingan, jabatan
+                   tertinggi) menjalankan konsensus voting Borda -> langkah pemenang dimainkan.
+  giliran lawan  : komputer membalas dengan algoritma catur biasa (Stockfish; tanpa Stockfish: aturan sederhana).
+
+Anggota bisa keluar atau bergabung kapan saja. Bila semua pemain keluar (atau tidak aktif terlalu lama),
+pertandingan otomatis berakhir. Bila Ketua keluar, anggota yang bergabung paling awal menjadi Ketua.
+
+python-chess wajib untuk alur bermain; Stockfish opsional.
 
     python app.py                 # http://127.0.0.1:8000
     python app.py --port 8080 --host 0.0.0.0   # agar bisa dibuka dari perangkat lain di jaringan
@@ -24,6 +25,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import shutil
 import sqlite3
@@ -47,19 +49,17 @@ DB_PATH = Path(os.environ.get("SKAKMAT_DB") or BASE / "skakmat.db")
 SESI_DETIK = 8 * 3600
 MAKS_BODY = 64 * 1024
 GAGAL_MAKS, KUNCI_DETIK = 5, 60
-VERSI_SKEMA = 2          # 1 = alur lama (Kapten, penilaian manual 1-5); 2 = catur konsultasi
+DAFTAR_MAKS, DAFTAR_JENDELA = 10, 600       # pendaftaran per alamat IP per 10 menit
+VERSI_SKEMA = 3          # 1 = Kapten + penilaian manual; 2 = satu permainan global; 3 = akun + pertandingan (lobi)
+MAKS_ANGGOTA = 3
+TIMEOUT_AKTIF = int(os.environ.get("SKAKMAT_TIMEOUT_AKTIF") or 120)   # detik tanpa aktivitas -> dianggap keluar
 
-# Akun demo: semua setara, tidak ada jabatan. Yang membedakan hanya gaya main (profil bobot di gdss.PROFIL).
-# Ubah daftar ini untuk menambah/mengurangi anggota; urutan = urutan tampilan.
-AKUN = [  # (username, nama, gaya, sandi)
-    ("anggota1", "Anggota 1", "menyerang", "anggota123-1"),
-    ("anggota2", "Anggota 2", "seimbang", "anggota123-2"),
-    ("anggota3", "Anggota 3", "bertahan", "anggota123-3"),
+# Akun demo (dibuat otomatis agar mudah dicoba). Pengguna lain mendaftar sendiri lewat /api/daftar.
+AKUN = [  # (username, nama, sandi)
+    ("anggota1", "Anggota 1", "anggota123-1"),
+    ("anggota2", "Anggota 2", "anggota123-2"),
+    ("anggota3", "Anggota 3", "anggota123-3"),
 ]
-
-# Jabatan tertinggi: hanya akun ini yang boleh menjalankan konsensus (voting Borda) setelah semua anggota
-# selesai dinilai. Anggota lain tetap setara dalam mengusulkan langkah dan menerima hasil.
-KETUA = "anggota1"
 
 # Posisi awal setiap permainan: Giuoco Piano setelah 1.e4 e5 2.Nf3 Nc6 3.Bc4 Bc5 4.c3 Nf6, putih berjalan.
 POSISI_AWAL = {
@@ -69,7 +69,9 @@ POSISI_AWAL = {
 
 COOKIE_AMAN = os.environ.get("SKAKMAT_COOKIE_SECURE") == "1"   # aktifkan bila dilayani lewat HTTPS
 percobaan = {}     # (ip, username) -> (jumlah gagal, waktu kunci habis)
-_kunci_ronde = threading.Lock()   # usulan, penilaian, dan ronde baru diproses satu per satu
+pendaftaran = {}   # ip -> [waktu, ...]
+_kunci_ronde = threading.Lock()   # usulan, penilaian, keanggotaan, dan ronde baru diproses satu per satu
+RE_USERNAME = re.compile(r"^[a-z0-9_]{3,20}$")
 
 
 # ------------------------------------------------------------------ basis data
@@ -87,12 +89,24 @@ def hash_sandi(sandi, garam):
 SKEMA = """
 CREATE TABLE IF NOT EXISTS pengguna(
     id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, nama TEXT NOT NULL,
-    gaya TEXT NOT NULL, garam BLOB NOT NULL, sandi TEXT NOT NULL);
--- Satu baris = satu ronde (posisi tempat tim harus melangkah). permainan naik saat "Ronde baru".
+    garam BLOB NOT NULL, sandi TEXT NOT NULL, dibuat REAL NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS sesi(
     token TEXT PRIMARY KEY, pengguna_id INTEGER NOT NULL REFERENCES pengguna(id), kedaluwarsa REAL NOT NULL);
+-- Satu baris = satu pertandingan (ruang main). Ketua = pembuat; berpindah ke anggota paling awal bila Ketua keluar.
+CREATE TABLE IF NOT EXISTS pertandingan(
+    id INTEGER PRIMARY KEY AUTOINCREMENT, kode TEXT UNIQUE NOT NULL, nama TEXT NOT NULL,
+    ketua_id INTEGER REFERENCES pengguna(id), status TEXT NOT NULL DEFAULT 'berlangsung',
+    alasan_selesai TEXT, dibuat REAL NOT NULL, berakhir REAL);
+-- Keanggotaan: aktif = 1 selama pemain berada di pertandingan. gaya (menyerang/seimbang/bertahan) unik per pertandingan.
+CREATE TABLE IF NOT EXISTS anggota(
+    pertandingan_id INTEGER NOT NULL REFERENCES pertandingan(id) ON DELETE CASCADE,
+    pengguna_id INTEGER NOT NULL REFERENCES pengguna(id),
+    gaya TEXT NOT NULL, bergabung REAL NOT NULL, terakhir REAL NOT NULL, aktif INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY(pertandingan_id, pengguna_id));
+-- Satu baris = satu ronde (posisi tempat tim harus melangkah). permainan naik saat "Permainan baru".
 CREATE TABLE IF NOT EXISTS kasus(
-    id INTEGER PRIMARY KEY AUTOINCREMENT, permainan INTEGER NOT NULL, nomor INTEGER NOT NULL,
+    id INTEGER PRIMARY KEY AUTOINCREMENT, pertandingan_id INTEGER NOT NULL REFERENCES pertandingan(id) ON DELETE CASCADE,
+    permainan INTEGER NOT NULL, nomor INTEGER NOT NULL,
     fen TEXT NOT NULL, riwayat TEXT NOT NULL, dibuat REAL NOT NULL, selesai TEXT);
 CREATE TABLE IF NOT EXISTS usulan(
     kasus_id INTEGER NOT NULL REFERENCES kasus(id) ON DELETE CASCADE,
@@ -113,9 +127,9 @@ CREATE TABLE IF NOT EXISTS konsensus(
 
 
 def migrasi_bila_perlu():
-    """Basis data skema lama (Kapten + penilaian manual) tidak cocok dengan alur baru. Isinya hanya data
-    demo, jadi file dicadangkan utuh di sebelahnya lalu tabel lama dibuang. Aplikasi tidak pernah mati
-    hanya karena basis data lama; bila pencadangan pun gagal, berhenti dengan pesan yang jelas."""
+    """Basis data skema lama tidak cocok dengan alur pertandingan. Isinya hanya data demo, jadi file dicadangkan
+    utuh di sebelahnya lalu tabel lama dibuang. Aplikasi tidak pernah mati hanya karena basis data lama; bila
+    pencadangan pun gagal, berhenti dengan pesan yang jelas."""
     if not DB_PATH.exists():
         return
     try:
@@ -135,7 +149,8 @@ def migrasi_bila_perlu():
                          f"({e}). Hapus file itu secara manual, lalu jalankan lagi.")
     with sqlite3.connect(DB_PATH) as c:
         c.execute("PRAGMA foreign_keys = OFF")
-        for t in ("konsensus", "penilaian_individual", "penilaian", "usulan", "kasus", "pengguna"):
+        for t in ("konsensus", "penilaian_individual", "penilaian", "usulan", "kasus", "anggota", "pertandingan",
+                  "sesi", "pengguna"):
             c.execute(f"DROP TABLE IF EXISTS {t}")
     print(f"Basis data skema lama (versi {versi}) dicadangkan ke {cadangan.name} dan diganti skema baru.", flush=True)
 
@@ -145,35 +160,160 @@ def siapkan_db():
     with db() as c:
         c.executescript(SKEMA)
         c.execute(f"PRAGMA user_version = {VERSI_SKEMA}")
-        for username, nama, gaya, sandi in AKUN:
-            if gaya not in gdss.PROFIL:
-                raise SystemExit(f"Gaya '{gaya}' untuk akun {username} tidak dikenal. Pilihan: {', '.join(gdss.PROFIL)}.")
+        for username, nama, sandi in AKUN:
             # SKAKMAT_SANDI_<USERNAME> (mis. SKAKMAT_SANDI_ANGGOTA1) menggantikan kata sandi bawaan; dipakai
             # saat server dibuka lewat internet supaya akun demo tidak bisa ditebak.
             sandi_env = os.environ.get("SKAKMAT_SANDI_" + username.upper())
             if c.execute("SELECT 1 FROM pengguna WHERE username=?", (username,)).fetchone():
-                c.execute("UPDATE pengguna SET nama=?, gaya=? WHERE username=?", (nama, gaya, username))
+                c.execute("UPDATE pengguna SET nama=? WHERE username=?", (nama, username))
                 if sandi_env:
                     garam = secrets.token_bytes(16)
                     c.execute("UPDATE pengguna SET garam=?, sandi=? WHERE username=?",
                               (garam, hash_sandi(sandi_env, garam), username))
             else:
                 garam = secrets.token_bytes(16)
-                c.execute("INSERT INTO pengguna(username,nama,gaya,garam,sandi) VALUES(?,?,?,?,?)",
-                          (username, nama, gaya, garam, hash_sandi(sandi_env or sandi, garam)))
-        if c.execute("SELECT COUNT(*) FROM kasus").fetchone()[0] == 0:
-            permainan_baru(c)
+                c.execute("INSERT INTO pengguna(username,nama,garam,sandi,dibuat) VALUES(?,?,?,?,?)",
+                          (username, nama, garam, hash_sandi(sandi_env or sandi, garam), time.time()))
+
+
+# ------------------------------------------------------------------ pertandingan dan keanggotaan
+def kode_baru(c):
+    abjad = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    while True:
+        kode = "".join(secrets.choice(abjad) for _ in range(5))
+        if not c.execute("SELECT 1 FROM pertandingan WHERE kode=?", (kode,)).fetchone():
+            return kode
+
+
+def anggota_aktif(c, pid):
+    """Pemain yang sedang berada di pertandingan pid, urut menurut waktu bergabung (yang paling awal dulu)."""
+    ketua = c.execute("SELECT ketua_id FROM pertandingan WHERE id=?", (pid,)).fetchone()
+    ketua_id = ketua["ketua_id"] if ketua else None
+    out = []
+    for r in c.execute("SELECT p.id, p.username, p.nama, a.gaya FROM anggota a JOIN pengguna p ON p.id = a.pengguna_id "
+                       "WHERE a.pertandingan_id=? AND a.aktif=1 ORDER BY a.bergabung, p.id", (pid,)):
+        d = dict(r)
+        d["gaya_nama"] = gdss.PROFIL[d["gaya"]]["nama"]
+        d["bobot"] = gdss.PROFIL[d["gaya"]]["bobot"]
+        d["ketua"] = d["id"] == ketua_id
+        out.append(d)
+    return out
+
+
+def pertandingan_saya(c, user_id):
+    """Pertandingan berlangsung yang sedang diikuti pengguna, atau None."""
+    return c.execute("SELECT t.* FROM anggota a JOIN pertandingan t ON t.id = a.pertandingan_id "
+                     "WHERE a.pengguna_id=? AND a.aktif=1 AND t.status='berlangsung'", (user_id,)).fetchone()
+
+
+def ringkas_pertandingan(c, t):
+    ag = anggota_aktif(c, t["id"])
+    ketua = next((a for a in ag if a["ketua"]), None)
+    return {"id": t["id"], "kode": t["kode"], "nama": t["nama"], "status": t["status"],
+            "ketua": ketua["nama"] if ketua else None, "anggota": [
+                {"id": a["id"], "nama": a["nama"], "gaya": a["gaya"], "gaya_nama": a["gaya_nama"], "ketua": a["ketua"]}
+                for a in ag],
+            "penuh": len(ag) >= MAKS_ANGGOTA,
+            "gaya_tersedia": [g for g in gdss.PROFIL if g not in {a["gaya"] for a in ag}]}
+
+
+def pilih_gaya(c, pid, gaya):
+    """Gaya yang diminta (atau yang pertama tersedia). Mengembalikan (gaya, None) atau (None, pesan)."""
+    terpakai = {a["gaya"] for a in anggota_aktif(c, pid)}
+    bebas = [g for g in gdss.PROFIL if g not in terpakai]
+    if not bebas:
+        return None, "Pertandingan sudah penuh."
+    if gaya in (None, ""):
+        return bebas[0], None
+    if gaya not in gdss.PROFIL:
+        return None, "Gaya main tidak dikenal. Pilihan: " + ", ".join(gdss.PROFIL) + "."
+    if gaya in terpakai:
+        return None, f"Gaya {gdss.PROFIL[gaya]['nama']} sudah dipakai anggota lain. Pilihan yang tersisa: " + ", ".join(bebas) + "."
+    return gaya, None
+
+
+def buat_pertandingan(c, user, nama, gaya):
+    if gaya not in (None, "") and gaya not in gdss.PROFIL:
+        return None, (400, "Gaya main tidak dikenal. Pilihan: " + ", ".join(gdss.PROFIL) + ".")
+    now = time.time()
+    cur = c.execute("INSERT INTO pertandingan(kode,nama,ketua_id,status,dibuat) VALUES(?,?,?,?,?)",
+                    (kode_baru(c), nama, user["id"], "berlangsung", now))
+    pid = cur.lastrowid
+    c.execute("INSERT INTO anggota(pertandingan_id,pengguna_id,gaya,bergabung,terakhir,aktif) VALUES(?,?,?,?,?,1)",
+              (pid, user["id"], gaya or next(iter(gdss.PROFIL)), now, now))
+    permainan_baru(c, pid)
+    return pid, None
+
+
+def gabung_pertandingan(c, user, pid, gaya):
+    t = c.execute("SELECT * FROM pertandingan WHERE id=?", (pid,)).fetchone()
+    if not t:
+        return None, (404, "Pertandingan tidak ditemukan.")
+    if t["status"] != "berlangsung":
+        return None, (409, "Pertandingan ini sudah berakhir.")
+    if pertandingan_saya(c, user["id"]):
+        return None, (409, "Anda masih berada di sebuah pertandingan. Keluar dulu sebelum bergabung ke yang lain.")
+    if len(anggota_aktif(c, pid)) >= MAKS_ANGGOTA:
+        return None, (409, "Pertandingan sudah penuh (maksimal 3 pemain).")
+    g, pesan = pilih_gaya(c, pid, gaya)
+    if pesan:
+        return None, (409, pesan)
+    now = time.time()
+    c.execute("INSERT INTO anggota(pertandingan_id,pengguna_id,gaya,bergabung,terakhir,aktif) VALUES(?,?,?,?,?,1) "
+              "ON CONFLICT(pertandingan_id,pengguna_id) DO UPDATE SET gaya=excluded.gaya, bergabung=excluded.bergabung, "
+              "terakhir=excluded.terakhir, aktif=1", (pid, user["id"], g, now, now))
+    setelah_perubahan_anggota(c, pid)
+    return pid, None
+
+
+def keluar_pertandingan(c, user_id, pid):
+    """Pemain keluar. Usulannya pada ronde berjalan dibuang; anggota yang tersisa tidak perlu menunggunya."""
+    c.execute("UPDATE anggota SET aktif=0 WHERE pertandingan_id=? AND pengguna_id=?", (pid, user_id))
+    k = kasus_aktif(c, pid)
+    if k and not c.execute("SELECT 1 FROM konsensus WHERE kasus_id=?", (k["id"],)).fetchone():
+        c.execute("DELETE FROM usulan WHERE kasus_id=? AND pengguna_id=?", (k["id"], user_id))
+    setelah_perubahan_anggota(c, pid)
+
+
+def setelah_perubahan_anggota(c, pid, alasan="Semua pemain keluar dari pertandingan."):
+    """Dipanggil setiap ada pemain yang bergabung atau keluar.
+    - tidak ada pemain tersisa -> pertandingan berakhir otomatis;
+    - Ketua keluar -> anggota paling awal menjadi Ketua;
+    - penilaian individual ronde berjalan yang belum dikonsensuskan dibuang (kumpulan penilainya berubah), lalu
+      dibuat ulang bila semua pemain yang tersisa sudah mengusulkan."""
+    ag = anggota_aktif(c, pid)
+    if not ag:
+        c.execute("UPDATE pertandingan SET status='selesai', alasan_selesai=?, berakhir=? WHERE id=?",
+                  (alasan, time.time(), pid))
+        return
+    if not any(a["ketua"] for a in ag):
+        c.execute("UPDATE pertandingan SET ketua_id=? WHERE id=?", (ag[0]["id"], pid))
+    k = kasus_aktif(c, pid)
+    if k and not c.execute("SELECT 1 FROM konsensus WHERE kasus_id=?", (k["id"],)).fetchone():
+        c.execute("DELETE FROM penilaian_individual WHERE kasus_id=?", (k["id"],))
+        if not k["selesai"] and mesin.pustaka_ada() and all(s["sudah"] for s in status_usulan(c, k)):
+            siapkan_penilaian(c, k)
+
+
+def bersihkan_tidak_aktif(c):
+    """Pemain yang tidak mengirim permintaan apa pun selama TIMEOUT_AKTIF detik dianggap keluar (menutup tab
+    tanpa menekan Keluar). Pertandingan tanpa pemain berakhir otomatis."""
+    batas = time.time() - TIMEOUT_AKTIF
+    basi = c.execute("SELECT pertandingan_id, pengguna_id FROM anggota WHERE aktif=1 AND terakhir < ?", (batas,)).fetchall()
+    for r in basi:
+        keluar_pertandingan(c, r["pengguna_id"], r["pertandingan_id"])
+    return len(basi)
 
 
 # ------------------------------------------------------------------ ronde dan permainan
-def permainan_baru(c):
-    p = c.execute("SELECT COALESCE(MAX(permainan), 0) + 1 FROM kasus").fetchone()[0]
-    buat_ronde(c, p, 1, POSISI_AWAL["fen"], POSISI_AWAL["riwayat"])
+def permainan_baru(c, pid):
+    p = c.execute("SELECT COALESCE(MAX(permainan), 0) + 1 FROM kasus WHERE pertandingan_id=?", (pid,)).fetchone()[0]
+    buat_ronde(c, pid, p, 1, POSISI_AWAL["fen"], POSISI_AWAL["riwayat"])
 
 
-def buat_ronde(c, permainan, nomor, fen, riwayat, selesai=None):
-    c.execute("INSERT INTO kasus(permainan,nomor,fen,riwayat,dibuat,selesai) VALUES(?,?,?,?,?,?)",
-              (permainan, nomor, fen, json.dumps(riwayat), time.time(), selesai))
+def buat_ronde(c, pid, permainan, nomor, fen, riwayat, selesai=None):
+    c.execute("INSERT INTO kasus(pertandingan_id,permainan,nomor,fen,riwayat,dibuat,selesai) VALUES(?,?,?,?,?,?,?)",
+              (pid, permainan, nomor, fen, json.dumps(riwayat), time.time(), selesai))
 
 
 def teks_riwayat(riwayat):
@@ -181,31 +321,20 @@ def teks_riwayat(riwayat):
     return " ".join((f"{i // 2 + 1}. " if i % 2 == 0 else "") + san for i, san in enumerate(riwayat))
 
 
-def kasus_aktif(c):
-    r = c.execute("SELECT * FROM kasus ORDER BY id DESC LIMIT 1").fetchone()
+def kasus_aktif(c, pid):
+    r = c.execute("SELECT * FROM kasus WHERE pertandingan_id=? ORDER BY id DESC LIMIT 1", (pid,)).fetchone()
+    if not r:
+        return None
     riwayat = json.loads(r["riwayat"])
-    return {"id": r["id"], "permainan": r["permainan"], "nomor": r["nomor"], "fen": r["fen"],
-            "riwayat": riwayat, "riwayat_teks": teks_riwayat(riwayat), "selesai": r["selesai"],
+    return {"id": r["id"], "pertandingan_id": r["pertandingan_id"], "permainan": r["permainan"], "nomor": r["nomor"],
+            "fen": r["fen"], "riwayat": riwayat, "riwayat_teks": teks_riwayat(riwayat), "selesai": r["selesai"],
             "sisi_tim": "putih" if r["fen"].split()[1] == "w" else "hitam"}
 
 
-def peserta(c):
-    """Anggota aktif (yang ada di AKUN), dalam urutan AKUN."""
-    urutan = {a[0]: i for i, a in enumerate(AKUN)}
-    baris = c.execute("SELECT id, username, nama, gaya FROM pengguna").fetchall()
-    out = [dict(r) for r in baris if r["username"] in urutan]
-    out.sort(key=lambda r: urutan[r["username"]])
-    for p in out:
-        p["gaya_nama"] = gdss.PROFIL[p["gaya"]]["nama"]
-        p["bobot"] = gdss.PROFIL[p["gaya"]]["bobot"]
-        p["ketua"] = p["username"] == KETUA
-    return out
-
-
-def status_usulan(c, kasus_id):
+def status_usulan(c, kasus):
     sudah = {r["pengguna_id"]: r["waktu"] for r in
-             c.execute("SELECT pengguna_id, waktu FROM usulan WHERE kasus_id=?", (kasus_id,))}
-    return [{**p, "sudah": p["id"] in sudah} for p in peserta(c)]
+             c.execute("SELECT pengguna_id, waktu FROM usulan WHERE kasus_id=?", (kasus["id"],))}
+    return [{**p, "sudah": p["id"] in sudah} for p in anggota_aktif(c, kasus["pertandingan_id"])]
 
 
 def baca_konsensus(c, kasus_id):
@@ -223,8 +352,9 @@ def baca_konsensus(c, kasus_id):
 
 def hasil_terakhir(c, kasus):
     """Konsensus terbaru dalam permainan yang sedang berjalan (ronde aktif atau ronde sebelumnya)."""
-    r = c.execute("SELECT k.kasus_id FROM konsensus k JOIN kasus s ON s.id = k.kasus_id WHERE s.permainan=? "
-                  "ORDER BY s.id DESC LIMIT 1", (kasus["permainan"],)).fetchone()
+    r = c.execute("SELECT k.kasus_id FROM konsensus k JOIN kasus s ON s.id = k.kasus_id "
+                  "WHERE s.pertandingan_id=? AND s.permainan=? ORDER BY s.id DESC LIMIT 1",
+                  (kasus["pertandingan_id"], kasus["permainan"])).fetchone()
     return baca_konsensus(c, r["kasus_id"]) if r else None
 
 
@@ -244,7 +374,9 @@ def siapkan_penilaian(c, kasus):
         return None, (409, "Ronde ini sudah dinilai.")
     if c.execute("SELECT 1 FROM penilaian_individual WHERE kasus_id=?", (kasus["id"],)).fetchone():
         return baca_penilaian(c, kasus["id"]), None
-    status = status_usulan(c, kasus["id"])
+    status = status_usulan(c, kasus)
+    if not status:
+        return None, (409, "Tidak ada pemain di pertandingan ini.")
     belum = [s["nama"] for s in status if not s["sudah"]]
     if belum:
         return None, (409, "Belum semua anggota mengusulkan langkah: " + ", ".join(belum) + ".")
@@ -281,7 +413,8 @@ def siapkan_penilaian(c, kasus):
 
 def jalankan_konsensus(c, kasus):
     """Tahap 2, dijalankan Ketua: voting Borda atas penilaian individual semua anggota, lalu langkah pemenang
-    dimainkan, lawan membalas, dan ronde berikutnya dibuka. Mengembalikan (konsensus, None) atau (None, (status, pesan))."""
+    dimainkan, lawan membalas (algoritma catur biasa), dan ronde berikutnya dibuka.
+    Mengembalikan (konsensus, None) atau (None, (status, pesan))."""
     if c.execute("SELECT 1 FROM konsensus WHERE kasus_id=?", (kasus["id"],)).fetchone():
         return None, (409, "Ronde ini sudah dinilai.")
     pen = baca_penilaian(c, kasus["id"])
@@ -300,7 +433,7 @@ def jalankan_konsensus(c, kasus):
         m, lawan_sumber = mesin.langkah_lawan(fen_setelah)
         lawan = m.uci()
         fen_baru, lawan_san = mesin.mainkan(fen_setelah, lawan)
-        buat_ronde(c, kasus["permainan"], kasus["nomor"] + 1, fen_baru, riwayat + [lawan_san],
+        buat_ronde(c, kasus["pertandingan_id"], kasus["permainan"], kasus["nomor"] + 1, fen_baru, riwayat + [lawan_san],
                    selesai=mesin.status_akhir(fen_baru, tim))
     c.execute("INSERT INTO konsensus(kasus_id,alternatif,kriteria,topsis,borda,pemenang,pemenang_san,fen_setelah,"
               "lawan,lawan_san,lawan_sumber,akhir,waktu) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -337,7 +470,7 @@ def cookie_sesi(token, umur):
 def pengguna_dari_cookie(c, token):
     if not token:
         return None
-    r = c.execute("SELECT p.id, p.username, p.nama, p.gaya FROM sesi s JOIN pengguna p ON p.id = s.pengguna_id "
+    r = c.execute("SELECT p.id, p.username, p.nama FROM sesi s JOIN pengguna p ON p.id = s.pengguna_id "
                   "WHERE s.token=? AND s.kedaluwarsa >= ?", (token, time.time())).fetchone()
     return dict(r) if r else None
 
@@ -349,7 +482,7 @@ async def siklus(_app):
     yield
 
 
-app = FastAPI(title="SKAKMAT GDSS", version="2.1", lifespan=siklus,
+app = FastAPI(title="SKAKMAT GDSS", version="3.0", lifespan=siklus,
               docs_url="/api/docs" if os.environ.get("SKAKMAT_DOCS") == "1" else None,
               redoc_url=None, openapi_url="/api/openapi.json" if os.environ.get("SKAKMAT_DOCS") == "1" else None)
 
@@ -402,6 +535,17 @@ async def baca_json(request: Request):
     return data if isinstance(data, dict) else None
 
 
+def denyut(c, user):
+    """Setiap permintaan dari pemain yang sedang bertanding menandainya masih aktif; yang diam terlalu lama dikeluarkan."""
+    c.execute("UPDATE anggota SET terakhir=? WHERE pengguna_id=? AND aktif=1", (time.time(), user["id"]))
+    c.commit()
+    ada_basi = c.execute("SELECT 1 FROM anggota WHERE aktif=1 AND terakhir < ? LIMIT 1", (time.time() - TIMEOUT_AKTIF,)).fetchone()
+    if ada_basi:
+        with _kunci_ronde:
+            bersihkan_tidak_aktif(c)
+            c.commit()
+
+
 def api(fungsi):
     """Bungkus handler sinkron: buka koneksi, cek sesi, jalankan di thread pool (SQLite dan engine memblokir)."""
     async def rute(request: Request):
@@ -412,32 +556,109 @@ def api(fungsi):
                 user = pengguna_dari_cookie(c, request.cookies.get("sesi"))
                 if not user:
                     return galat(401, "Silakan masuk terlebih dahulu.")
+                denyut(c, user)
                 return fungsi(c, user, data, request)
         return await run_in_threadpool(kerja)
     return rute
 
 
+def butuh_pertandingan(c, user):
+    t = pertandingan_saya(c, user["id"])
+    if not t:
+        return None, galat(409, "Anda belum berada di sebuah pertandingan. Buat atau bergabung dulu dari lobi.")
+    return t, None
+
+
+def get_lobi(c, user, data, request):
+    """Daftar pertandingan yang sedang berlangsung dan pertandingan milik pengguna (bila ada)."""
+    saya = pertandingan_saya(c, user["id"])
+    daftar = [ringkas_pertandingan(c, t) for t in
+              c.execute("SELECT * FROM pertandingan WHERE status='berlangsung' ORDER BY id DESC LIMIT 50")]
+    return JSONResponse({"pengguna": user, "pertandingan_saya": saya["id"] if saya else None, "daftar": daftar,
+                         "profil": gdss.PROFIL, "maks_anggota": MAKS_ANGGOTA})
+
+
+def post_buat(c, user, data, request):
+    data = data or {}
+    nama = data.get("nama")
+    nama = nama.strip() if isinstance(nama, str) else ""
+    if not nama:
+        nama = f"Meja {user['nama']}"
+    if len(nama) > 40 or any(ord(ch) < 32 for ch in nama):
+        return galat(400, "Nama pertandingan paling panjang 40 karakter, tanpa karakter kontrol.")
+    gaya = data.get("gaya")
+    if gaya is not None and not isinstance(gaya, str):
+        return galat(400, "Gaya main tidak valid.")
+    with _kunci_ronde:
+        if pertandingan_saya(c, user["id"]):
+            return galat(409, "Anda masih berada di sebuah pertandingan. Keluar dulu sebelum membuat yang baru.")
+        pid, g = buat_pertandingan(c, user, nama, gaya)
+        if g:
+            return galat(*g)
+        c.commit()
+    return JSONResponse({"ok": True, "pertandingan": ringkas_pertandingan(c, c.execute(
+        "SELECT * FROM pertandingan WHERE id=?", (pid,)).fetchone())})
+
+
+def post_gabung(c, user, data, request):
+    data = data or {}
+    kode = data.get("kode")
+    pid = data.get("id")
+    gaya = data.get("gaya")
+    if gaya is not None and not isinstance(gaya, str):
+        return galat(400, "Gaya main tidak valid.")
+    if isinstance(kode, str) and kode.strip():
+        r = c.execute("SELECT id FROM pertandingan WHERE kode=?", (kode.strip().upper(),)).fetchone()
+        pid = r["id"] if r else None
+    if isinstance(pid, bool) or not isinstance(pid, int):
+        return galat(404, "Pertandingan tidak ditemukan.")
+    with _kunci_ronde:
+        hasil, g = gabung_pertandingan(c, user, pid, gaya)
+        if g:
+            return galat(*g)
+        c.commit()
+    return JSONResponse({"ok": True, "pertandingan": ringkas_pertandingan(c, c.execute(
+        "SELECT * FROM pertandingan WHERE id=?", (pid,)).fetchone())})
+
+
+def post_keluar_pertandingan(c, user, data, request):
+    with _kunci_ronde:
+        t = pertandingan_saya(c, user["id"])
+        if not t:
+            return galat(409, "Anda tidak sedang berada di pertandingan.")
+        keluar_pertandingan(c, user["id"], t["id"])
+        c.commit()
+        sisa = c.execute("SELECT status, alasan_selesai FROM pertandingan WHERE id=?", (t["id"],)).fetchone()
+    return JSONResponse({"ok": True, "pertandingan_berakhir": sisa["status"] == "selesai", "alasan": sisa["alasan_selesai"]})
+
+
 def get_ronde(c, user, data, request):
-    """Keadaan ronde. Tidak pernah memanggil engine (semua angka sudah dihitung saat penilaian),
-    jadi aman dipanggil berkala. Usulan anggota lain baru terlihat setelah ronde dinilai, supaya
+    """Keadaan ronde pertandingan pengguna. Tidak pernah memanggil engine (semua angka sudah dihitung saat
+    penilaian), jadi aman dipanggil berkala. Usulan anggota lain baru terlihat setelah ronde dinilai, supaya
     usulan tiap orang tetap independen."""
-    kasus = kasus_aktif(c)
-    status = status_usulan(c, kasus["id"])
+    t = pertandingan_saya(c, user["id"])
+    if not t:
+        return JSONResponse({"pengguna": user, "pertandingan": None})
+    kasus = kasus_aktif(c, t["id"])
+    status = status_usulan(c, kasus)
     saya = c.execute("SELECT langkah, san, waktu FROM usulan WHERE kasus_id=? AND pengguna_id=?",
                      (kasus["id"], user["id"])).fetchone()
     konsensus = baca_konsensus(c, kasus["id"])
     penilaian = None if konsensus else baca_penilaian(c, kasus["id"])
     bisa_usul = mesin.pustaka_ada() and not konsensus and not penilaian and not kasus["selesai"]
+    ketua = next((s for s in status if s["ketua"]), None)
+    saya_ketua = bool(ketua) and ketua["id"] == user["id"]
     return JSONResponse({
-        "pengguna": user, "peserta": status, "kasus": kasus,
+        "pengguna": {**user, "gaya": next((s["gaya"] for s in status if s["id"] == user["id"]), None)},
+        "pertandingan": ringkas_pertandingan(c, t), "peserta": status, "kasus": kasus,
         "kriteria": gdss.KRITERIA, "profil": gdss.PROFIL,
         "semua_sudah": all(s["sudah"] for s in status),
         "usulan_saya": {"uci": saya["langkah"], "san": saya["san"], "waktu": saya["waktu"]} if saya else None,
         "langkah_sah": mesin.langkah_sah(kasus["fen"]) if bisa_usul else [],
-        "ketua": KETUA,
-        "saya_ketua": user["username"] == KETUA,
+        "ketua": ketua["username"] if ketua else None,
+        "saya_ketua": saya_ketua,
         "penilaian": penilaian,                       # penilaian individual semua anggota, menunggu konsensus Ketua
-        "bisa_konsensus": bool(penilaian) and user["username"] == KETUA,
+        "bisa_konsensus": bool(penilaian) and saya_ketua,
         "konsensus": konsensus,                       # ronde aktif sudah dikonsensuskan (hanya bila permainan selesai)
         "hasil_terakhir": konsensus or hasil_terakhir(c, kasus),
         "server": {"python_chess": mesin.pustaka_ada(), "stockfish": bool(mesin.path_engine())},
@@ -448,12 +669,13 @@ def post_usul(c, user, data, request):
     langkah = data.get("langkah") if data else None
     if not isinstance(langkah, str):
         return galat(400, "Usulan harus berupa satu langkah, mis. e2e4.")
-    if user["username"] not in {a[0] for a in AKUN}:
-        return galat(403, "Akun ini bukan anggota tim yang aktif.")
     with _kunci_ronde:
-        kasus = kasus_aktif(c)
+        t, g = butuh_pertandingan(c, user)
+        if g:
+            return g
+        kasus = kasus_aktif(c, t["id"])
         if kasus["selesai"]:
-            return galat(409, "Permainan sudah selesai: " + kasus["selesai"] + " Mulai ronde baru.")
+            return galat(409, "Permainan sudah selesai: " + kasus["selesai"] + " Mulai permainan baru.")
         if c.execute("SELECT 1 FROM konsensus WHERE kasus_id=?", (kasus["id"],)).fetchone():
             return galat(409, "Ronde ini sudah dinilai; usulan dikunci.")
         if c.execute("SELECT 1 FROM penilaian_individual WHERE kasus_id=?", (kasus["id"],)).fetchone():
@@ -468,62 +690,97 @@ def post_usul(c, user, data, request):
                   (kasus["id"], user["id"], m.uci(), san, time.time()))
         c.commit()
         out = {"ok": True, "usulan": {"uci": m.uci(), "san": san}, "dinilai": False, "penilaian_siap": False}
-        if all(s["sudah"] for s in status_usulan(c, kasus["id"])):
-            pen, g = siapkan_penilaian(c, kasus)
+        if all(s["sudah"] for s in status_usulan(c, kasus)):
+            pen, g2 = siapkan_penilaian(c, kasus)
             c.commit()
-            if g:
-                out["galat_penilaian"] = g[1]
+            if g2:
+                out["galat_penilaian"] = g2[1]
             else:
                 out.update(penilaian_siap=True, penilaian=pen)
         return JSONResponse(out)
 
 
 def post_konsensus(c, user, data, request):
-    """Konsensus Borda. Hanya Ketua (jabatan tertinggi), dan hanya setelah semua anggota selesai dinilai."""
-    if user["username"] != KETUA:
-        return galat(403, "Hanya Ketua (jabatan tertinggi) yang boleh menjalankan konsensus.")
+    """Konsensus Borda. Hanya Ketua pertandingan (jabatan tertinggi), dan hanya setelah semua anggota selesai dinilai."""
     with _kunci_ronde:
-        kasus = kasus_aktif(c)
+        t, g = butuh_pertandingan(c, user)
+        if g:
+            return g
+        if t["ketua_id"] != user["id"]:
+            return galat(403, "Hanya Ketua (jabatan tertinggi) yang boleh menjalankan konsensus.")
+        kasus = kasus_aktif(c, t["id"])
         if c.execute("SELECT 1 FROM penilaian_individual WHERE kasus_id=?", (kasus["id"],)).fetchone() is None:
-            pen, g = siapkan_penilaian(c, kasus)    # bila tahap 1 sempat gagal (mis. engine mati), coba lagi
+            pen, g2 = siapkan_penilaian(c, kasus)    # bila tahap 1 sempat gagal (mis. engine mati), coba lagi
             c.commit()
-            if g:
-                return galat(*g)
-        hasil, g = jalankan_konsensus(c, kasus)
+            if g2:
+                return galat(*g2)
+        hasil, g2 = jalankan_konsensus(c, kasus)
         c.commit()
-    if g:
-        return galat(*g)
+    if g2:
+        return galat(*g2)
     return JSONResponse({"ok": True, "konsensus": hasil})
 
 
 def post_ulang(c, user, data, request):
-    """Ronde baru: mulai permainan baru dari posisi awal. Semua akun boleh; riwayat lama tetap tersimpan."""
+    """Permainan baru dari posisi awal. Semua anggota boleh; riwayat lama tetap tersimpan."""
     with _kunci_ronde:
-        permainan_baru(c)
+        t, g = butuh_pertandingan(c, user)
+        if g:
+            return g
+        permainan_baru(c, t["id"])
         c.commit()
-    return JSONResponse({"ok": True, "kasus": kasus_aktif(c)})
+        return JSONResponse({"ok": True, "kasus": kasus_aktif(c, t["id"])})
 
 
-def post_keluar(c, user, data, request):
-    c.execute("DELETE FROM sesi WHERE token=?", (request.cookies.get("sesi"),))
-    resp = JSONResponse({"ok": True})
-    resp.headers["Set-Cookie"] = cookie_sesi("", 0)
-    return resp
-
-
+app.add_api_route("/api/lobi", api(get_lobi), methods=["GET"])
+app.add_api_route("/api/pertandingan/buat", api(post_buat), methods=["POST"])
+app.add_api_route("/api/pertandingan/gabung", api(post_gabung), methods=["POST"])
+app.add_api_route("/api/pertandingan/keluar", api(post_keluar_pertandingan), methods=["POST"])
 app.add_api_route("/api/ronde", api(get_ronde), methods=["GET"])
 app.add_api_route("/api/usul", api(post_usul), methods=["POST"])
 app.add_api_route("/api/konsensus", api(post_konsensus), methods=["POST"])
 app.add_api_route("/api/ulang", api(post_ulang), methods=["POST"])
-app.add_api_route("/api/keluar", api(post_keluar), methods=["POST"])
+
+
+@app.post("/api/keluar")
+async def post_keluar(request: Request):
+    """Keluar dari akun. Pemain otomatis keluar dari pertandingannya; bila ia yang terakhir, pertandingan berakhir."""
+    token = request.cookies.get("sesi")
+
+    def kerja():
+        with db() as c:
+            user = pengguna_dari_cookie(c, token)
+            if user:
+                with _kunci_ronde:
+                    t = pertandingan_saya(c, user["id"])
+                    if t:
+                        keluar_pertandingan(c, user["id"], t["id"])
+                    c.execute("DELETE FROM sesi WHERE token=?", (token,))
+                    c.commit()
+        resp = JSONResponse({"ok": True})
+        resp.headers["Set-Cookie"] = cookie_sesi("", 0)
+        return resp
+    return await run_in_threadpool(kerja)
 
 
 @app.get("/api/me")
 async def get_me(request: Request):
     def kerja():
         with db() as c:
-            return JSONResponse({"pengguna": pengguna_dari_cookie(c, request.cookies.get("sesi"))})
+            user = pengguna_dari_cookie(c, request.cookies.get("sesi"))
+            if user:
+                denyut(c, user)
+                t = pertandingan_saya(c, user["id"])
+                user = {**user, "pertandingan": t["id"] if t else None}
+            return JSONResponse({"pengguna": user})
     return await run_in_threadpool(kerja)
+
+
+def _sesi_baru(c, pengguna):
+    token = buat_sesi(c, pengguna["id"])
+    resp = JSONResponse({"pengguna": {"id": pengguna["id"], "username": pengguna["username"], "nama": pengguna["nama"]}})
+    resp.headers["Set-Cookie"] = cookie_sesi(token, SESI_DETIK)
+    return resp
 
 
 @app.post("/api/login")
@@ -549,11 +806,40 @@ async def post_login(request: Request):
                 percobaan[kunci] = (gagal + 1, time.time() + KUNCI_DETIK)
                 return galat(401, "Nama pengguna atau kata sandi salah.")
             percobaan.pop(kunci, None)
-            token = buat_sesi(c, r["id"])
-        resp = JSONResponse({"pengguna": {"id": r["id"], "username": r["username"], "nama": r["nama"],
-                                          "gaya": r["gaya"]}})
-        resp.headers["Set-Cookie"] = cookie_sesi(token, SESI_DETIK)
-        return resp
+            return _sesi_baru(c, r)
+    return await run_in_threadpool(kerja)
+
+
+@app.post("/api/daftar")
+async def post_daftar(request: Request):
+    """Akun baru. Nama pengguna 3-20 karakter (huruf kecil, angka, garis bawah), nama tampilan 2-30 karakter,
+    kata sandi minimal 6 karakter. Langsung masuk setelah mendaftar."""
+    data = await baca_json(request)
+    if not data or not all(isinstance(data.get(k), str) for k in ("username", "nama", "sandi")):
+        return galat(400, "Isi nama pengguna, nama tampilan, dan kata sandi.")
+    username, nama, sandi = data["username"].strip().lower(), data["nama"].strip(), data["sandi"]
+    if not RE_USERNAME.match(username):
+        return galat(400, "Nama pengguna 3 sampai 20 karakter: huruf kecil, angka, dan garis bawah.")
+    if not 2 <= len(nama) <= 30 or any(ord(ch) < 32 for ch in nama):
+        return galat(400, "Nama tampilan 2 sampai 30 karakter.")
+    if not 6 <= len(sandi) <= 100:
+        return galat(400, "Kata sandi 6 sampai 100 karakter.")
+    ip = request.client.host if request.client else "?"
+
+    def kerja():
+        sekarang = time.time()
+        riwayat = [w for w in pendaftaran.get(ip, []) if w > sekarang - DAFTAR_JENDELA]
+        if len(riwayat) >= DAFTAR_MAKS:
+            return galat(429, "Terlalu banyak pendaftaran dari alamat ini. Coba lagi nanti.")
+        with db() as c:
+            garam = secrets.token_bytes(16)
+            try:
+                cur = c.execute("INSERT INTO pengguna(username,nama,garam,sandi,dibuat) VALUES(?,?,?,?,?)",
+                                (username, nama, garam, hash_sandi(sandi, garam), sekarang))
+            except sqlite3.IntegrityError:
+                return galat(409, "Nama pengguna sudah dipakai. Pilih yang lain.")
+            pendaftaran[ip] = riwayat + [sekarang]
+            return _sesi_baru(c, {"id": cur.lastrowid, "username": username, "nama": nama})
     return await run_in_threadpool(kerja)
 
 

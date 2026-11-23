@@ -17,16 +17,50 @@
   <p id="viewMuat" class="kartu memuat" role="status">Memuat data…</p>
 
   <section id="viewLogin" class="kartu login sembunyi">
-    <h1>Masuk</h1>
-    <p class="catatan">Gunakan salah satu akun anggota tim: anggota1, anggota2, atau anggota3. Anggota 1 adalah Ketua (jabatan tertinggi) yang menjalankan konsensus; ketiganya sama-sama mengusulkan langkah dan menerima hasil.</p>
+    <h1 id="judulLogin">Masuk</h1>
+    <p class="catatan">Masuk dengan akunmu, atau daftar akun baru. Setelah masuk kamu bisa membuat pertandingan atau bergabung ke pertandingan yang sudah ada (maksimal 3 pemain).</p>
     <p id="infoLogin" class="pesan" role="status"></p>
     <form id="formLogin">
       <label>Nama pengguna<input id="inUser" autocomplete="username" required></label>
       <label>Kata sandi<input id="inSandi" type="password" autocomplete="current-password" required></label>
       <button id="btnMasuk" type="submit">Masuk</button>
       <p id="galatLogin" class="galat" role="alert"></p>
+      <p class="catatan">Belum punya akun? <button id="btnKeDaftar" type="button" class="tautan">Daftar akun baru</button></p>
+    </form>
+    <form id="formDaftar" class="sembunyi">
+      <label>Nama pengguna<input id="dfUser" autocomplete="username" minlength="3" maxlength="20" pattern="[a-z0-9_]{3,20}" required><small class="catatan">3 sampai 20 karakter: huruf kecil, angka, garis bawah.</small></label>
+      <label>Nama tampilan<input id="dfNama" autocomplete="nickname" minlength="2" maxlength="30" required></label>
+      <label>Kata sandi<input id="dfSandi" type="password" autocomplete="new-password" minlength="6" maxlength="100" required><small class="catatan">Minimal 6 karakter.</small></label>
+      <button id="btnDaftar" type="submit">Daftar dan masuk</button>
+      <p id="galatDaftar" class="galat" role="alert"></p>
+      <p class="catatan">Sudah punya akun? <button id="btnKeMasuk" type="button" class="tautan">Masuk</button></p>
     </form>
   </section>
+
+  <section id="viewLobi" class="sembunyi">
+    <h1 class="sr">Lobi pertandingan</h1>
+    <div id="pesanLobi" class="pesan" role="status"></div>
+    <div class="kartu">
+      <h2>Buat pertandingan</h2>
+      <p class="catatan">Kamu menjadi Ketua pertandingan: hanya Ketua yang menjalankan konsensus (voting Borda). Teman bergabung lewat daftar di bawah atau memakai kode pertandingan.</p>
+      <form id="formBuat" class="form-baris">
+        <label>Nama pertandingan<input id="inNamaMatch" maxlength="40" placeholder="mis. Meja Kelompok 2"></label>
+        <label>Gaya mainmu<select id="selGayaBuat"></select></label>
+        <button id="btnBuat" type="submit">Buat pertandingan</button>
+      </form>
+    </div>
+    <div class="kartu">
+      <h2>Pertandingan yang sedang berlangsung</h2>
+      <div id="daftarMatch" class="daftar-match"></div>
+      <form id="formKode" class="form-baris">
+        <label>Gabung dengan kode<input id="inKode" maxlength="5" placeholder="5 karakter" autocomplete="off"></label>
+        <label>Gaya main<select id="selGayaKode"></select></label>
+        <button id="btnKode" type="submit" class="sekunder">Gabung</button>
+      </form>
+      <p class="catatan"><button id="btnSegarLobi" type="button" class="sekunder kecil">Segarkan daftar</button> Daftar diperbarui otomatis.</p>
+    </div>
+  </section>
+
 
   <div id="viewApp" class="sembunyi">
     <h1 class="sr">Catur konsultasi SKAKMAT</h1>
@@ -44,20 +78,22 @@
       </div>
 
       <aside class="panel" aria-label="Status ronde">
+        <p id="infoMatch" class="info-match"></p>
         <p id="selesai" class="selesai sembunyi" role="status"></p>
         <h3>Usulan Anda</h3>
         <p id="usulanSaya" class="usulan-saya"></p>
         <h3>Tim</h3>
         <p id="ringkasStatus" class="ringkas" role="status"></p>
         <ul id="status" class="status"></ul>
-        <p class="catatan">Usulan anggota lain baru terlihat setelah ketiganya masuk, supaya tiap usulan tetap independen. Setelah usulan ketiga masuk, penilaian individual tiap anggota muncul otomatis; Ketua lalu menjalankan konsensus (voting Borda).</p>
+        <p class="catatan">Usulan anggota lain baru terlihat setelah semua anggota pertandingan ini mengusulkan, supaya tiap usulan tetap independen. Anggota baru bisa bergabung dan anggota bisa keluar kapan saja; bila semua keluar, pertandingan berakhir otomatis. Setelah usulan ketiga masuk, penilaian individual tiap anggota muncul otomatis; Ketua lalu menjalankan konsensus (voting Borda).</p>
         <h3>Riwayat langkah</h3>
         <p id="riwayat" class="riwayat"></p>
         <div class="aksi">
-          <button id="btnRondeBaru" type="button" class="sekunder" aria-describedby="ketRondeBaru">Ronde baru</button>
+          <button id="btnRondeBaru" type="button" class="sekunder" aria-describedby="ketRondeBaru">Permainan baru</button>
+          <button id="btnKeluarMatch" type="button" class="sekunder">Keluar dari pertandingan</button>
           <button id="btnSegar" type="button" class="sekunder kecil">Segarkan</button>
         </div>
-        <p id="ketRondeBaru" class="catatan">Ronde baru memulai permainan lagi dari posisi awal. Riwayat permainan sebelumnya tetap tersimpan di server.</p>
+        <p id="ketRondeBaru" class="catatan">Permainan baru memulai lagi dari posisi awal. Riwayat permainan sebelumnya tetap tersimpan di server.</p>
         <p id="infoSegar" class="catatan"></p>
       </aside>
     </section>

@@ -149,11 +149,15 @@ def nyalakan(env_tambahan):
 
 
 def masuk_semua():
+    """Tiga akun login, anggota1 membuat pertandingan (Ketua), anggota2 dan anggota3 bergabung."""
     klien = {}
     for u, s in AKUN.items():
-        k = Klien()
+        k = Klien(PORT)
         k.minta("/api/login", {"username": u, "sandi": s})
         klien[u] = k
+    st, j = klien["anggota1"].minta("/api/pertandingan/buat", {"nama": "Meja Uji Mesin", "gaya": "menyerang"})
+    for u, gaya in (("anggota2", "seimbang"), ("anggota3", "bertahan")):
+        klien[u].minta("/api/pertandingan/gabung", {"id": j["pertandingan"]["id"], "gaya": gaya})
     return klien
 
 
@@ -181,9 +185,7 @@ def satu_ronde(klien):
 
 
 def ganti_alamat():
-    """Klien dari test_e2e memakai port 8765; arahkan ke port tes ini."""
-    import test_e2e
-    test_e2e.BASE = BASE
+    """Klien dari test_e2e menerima port lewat argumen (Klien(PORT)); tidak ada yang perlu diarahkan ulang."""
 
 
 def skenario(nama, env, isi):

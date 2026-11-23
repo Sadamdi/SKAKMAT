@@ -232,3 +232,20 @@ table.peringkat tr.total > * { font-weight: bold; border-top: 2px solid var(--ga
 
 .tag-ketua { font-weight: 700; }
 #btnKonsensus { margin-top: 8px; }
+
+.tautan { background: none; border: none; padding: 0; color: var(--aksen, #7fa57f); text-decoration: underline; cursor: pointer; font: inherit; }
+.form-baris { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.form-baris label { margin: 0; }
+.daftar-match { display: flex; flex-direction: column; gap: 10px; margin: 8px 0 14px; }
+.baris-match { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; align-items: center;
+  border: 1px solid var(--garis, #3d382f); border-radius: 6px; padding: 10px 12px; }
+.kiri-match { min-width: 220px; flex: 1; }
+.info-match { margin: 0 0 8px; font-size: 14px; }
+
+.form-baris label { flex: 1 1 200px; margin: 0; min-width: 0; }
+.form-baris label select, .form-baris label input { display: block; width: 100%; margin-top: 4px; }
+.form-baris > button { flex: 0 0 auto; }
+.baris-match .form-baris label { flex: 0 1 220px; }
+.baris-match select { max-width: 100%; }
+select { font-family: inherit; font-size: 15px; padding: 8px 10px; }
+.kiri-match { overflow-wrap: anywhere; }

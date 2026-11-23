@@ -15,7 +15,8 @@ const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const NAMA_BIDAK = { k: "raja", q: "menteri", r: "benteng", b: "gajah", n: "kuda", p: "pion" };
 const BERKAS = "abcdefgh";
 const gerakDikurangi = matchMedia("(prefers-reduced-motion: reduce)");
-let data = null;
+let data = null;          // keadaan ronde bila sedang berada di pertandingan
+let sudahMasuk = false;   // sudah login (di lobi atau di pertandingan)
 
 async function api(path, body, signal) {
   const opsi = body === undefined ? { signal } : {
@@ -359,6 +360,8 @@ function renderRonde() {
   $("identitasAkun").replaceChildren(...namaDm(orangDenganId(pengguna.id)).childNodes);
   $("identitasAkun").className = `nama-dm ${kelasDm(pengguna.id)}`;
   $("judulRonde").textContent = `Permainan ${kasus.permainan} · Ronde ${kasus.nomor}`;
+  const pt = data.pertandingan;
+  $("infoMatch").replaceChildren(el("strong", "", pt.nama), ` · kode ${pt.kode} · ${pt.anggota.length} dari 3 pemain · Ketua: ${pt.ketua || "-"}`);
   const akhir = kasus.selesai || (data.konsensus && data.konsensus.akhir);
   $("giliran").textContent = akhir ? "Permainan selesai" : `Tim Anda: ${kasus.sisi_tim}, giliran melangkah`;
   $("selesai").classList.toggle("sembunyi", !akhir);
@@ -764,8 +767,20 @@ async function muat(paksa) {
   const ini = new AbortController();
   pengendali = ini;
   try {
-    data = await api("/api/ronde", undefined, ini.signal);
+    const d = await api("/api/ronde", undefined, ini.signal);
     waktuMuat = Date.now();
+    sudahMasuk = true;
+    if (!d.pertandingan) {          // belum atau tidak lagi berada di pertandingan: tampilkan lobi
+      const tadi = !!data;
+      data = null;
+      tandaPapan = ""; tandaHasil = ""; tandaHasilPapan = null; pilih = null;
+      hentikanAnimasi();
+      pesanPapan("");              // pesan papan dari pertandingan sebelumnya tidak ikut terbawa
+      await muatLobi(d.pengguna, tadi ? "Kamu sudah tidak berada di pertandingan." : "", ini.signal);
+      return;
+    }
+    data = d;
+    tandaLobi = "";
     tampilApp();
     pesan("");
     mungkinAnimasiPapan();
@@ -773,7 +788,7 @@ async function muat(paksa) {
     renderHasil();
   } catch (e) {
     if (e.name === "AbortError") return;
-    if (e.status === 401) return tampilLogin(data ? SESI_HABIS : "");
+    if (e.status === 401) return tampilLogin(sudahMasuk ? SESI_HABIS : "");
     pesan(e.message, true);
   } finally {
     if (pengendali === ini) {
@@ -786,15 +801,19 @@ async function muat(paksa) {
 function tampilApp() {
   $("viewMuat").classList.add("sembunyi");
   $("viewLogin").classList.add("sembunyi");
+  $("viewLobi").classList.add("sembunyi");
   $("viewApp").classList.remove("sembunyi");
   $("akun").classList.remove("sembunyi");
 }
 function tampilLogin(info) {
   if (pengendali) { pengendali.abort(); pengendali = null; }
   data = null;
+  sudahMasuk = false;
+  tandaLobi = "";
   tandaPapan = ""; tandaHasil = ""; tandaHasilPapan = null; pilih = null;
   $("viewMuat").classList.add("sembunyi");
   $("viewApp").classList.add("sembunyi");
+  $("viewLobi").classList.add("sembunyi");
   $("akun").classList.add("sembunyi");
   $("viewLogin").classList.remove("sembunyi");
   $("infoLogin").textContent = info || "";
@@ -868,11 +887,124 @@ $("btnPutar").addEventListener("click", putarAnimasi);
 gerakDikurangi.addEventListener("change", () => { if (modelAnimasi) putarAnimasi(); });
 $("btnSegar").addEventListener("click", () => kirimDengan($("btnSegar"), "Menyegarkan…", () => muat(true)));
 
+
+// ------------------------------------------------------------------ lobi: daftar, buat, gabung, keluar
+function isiPilihanGaya(sel, profil, daftar) {
+  sel.replaceChildren();
+  daftar.forEach((g) => sel.append(new Option(profil[g].nama + " (bobot " + profil[g].bobot.join("/") + ")", g)));
+}
+
+let tandaLobi = "";   // isi daftar yang sedang digambar; daftar hanya digambar ulang bila berubah
+
+async function muatLobi(pengguna, info, signal) {
+  const l = await api("/api/lobi", undefined, signal);
+  $("viewMuat").classList.add("sembunyi");
+  $("viewLogin").classList.add("sembunyi");
+  $("viewApp").classList.add("sembunyi");
+  $("viewLobi").classList.remove("sembunyi");
+  $("akun").classList.remove("sembunyi");
+  $("identitasAkun").className = "nama-dm";
+  $("identitasAkun").textContent = (pengguna || l.pengguna).nama;
+  if (info) pesan(info, false, "pesanLobi"); else if (!$("pesanLobi").classList.contains("galat")) pesan("", false, "pesanLobi");
+  const semua = Object.keys(l.profil);
+  if (!$("selGayaBuat").options.length) {
+    isiPilihanGaya($("selGayaBuat"), l.profil, semua);
+    isiPilihanGaya($("selGayaKode"), l.profil, semua);
+  }
+  // Digambar ulang hanya bila isinya berubah, supaya pilihan gaya dan klik tombol tidak hilang saat penyegaran berkala.
+  const tanda = JSON.stringify(l.daftar.map((m) => [m.id, m.nama, m.kode, m.anggota.map((a) => [a.id, a.gaya, a.ketua]), m.gaya_tersedia]));
+  if (tanda === tandaLobi) return;
+  tandaLobi = tanda;
+  const wadah = $("daftarMatch");
+  wadah.replaceChildren();
+  if (!l.daftar.length) wadah.append(el("p", "catatan", "Belum ada pertandingan yang berlangsung. Buat yang pertama di atas."));
+  l.daftar.forEach((m) => {
+    const baris = el("div", "baris-match");
+    const kiri = el("div", "kiri-match");
+    kiri.append(el("strong", "", m.nama), el("span", "catatan", ` · kode ${m.kode} · Ketua ${m.ketua || "-"}`));
+    kiri.append(el("div", "catatan", m.anggota.map((a) => `${a.nama} (${a.gaya_nama}${a.ketua ? ", Ketua" : ""})`).join("; ")));
+    const kanan = el("div", "form-baris");
+    if (m.penuh) kanan.append(el("span", "catatan", `Penuh (${m.anggota.length}/${l.maks_anggota})`));
+    else {
+      const sel = el("select");
+      sel.setAttribute("aria-label", `Gaya main untuk ${m.nama}`);
+      isiPilihanGaya(sel, l.profil, m.gaya_tersedia);
+      const tombol = el("button", "", `Gabung (${m.anggota.length}/${l.maks_anggota})`);
+      tombol.type = "button";
+      tombol.addEventListener("click", () => gabungKe({ id: m.id, gaya: sel.value }, tombol));
+      kanan.append(sel, tombol);
+    }
+    baris.append(kiri, kanan);
+    wadah.append(baris);
+  });
+}
+
+function aksiLobi(tombol, teksSibuk, jalur, isi) {
+  return kirimDengan(tombol, teksSibuk, async () => {
+    try {
+      await api(jalur, isi);
+      pesan("", false, "pesanLobi");
+      await muat(true);
+    } catch (e) {
+      if (e.status === 401) return tampilLogin(SESI_HABIS);
+      pesan(e.message, true, "pesanLobi");
+      try { await muatLobi(null, "", undefined); } catch (e2) { /* biarkan pesan galat tampil */ }
+      pesan(e.message, true, "pesanLobi");
+    }
+  });
+}
+const gabungKe = (isi, tombol) => aksiLobi(tombol, "Bergabung…", "/api/pertandingan/gabung", isi);
+
+$("formBuat").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  aksiLobi($("btnBuat"), "Membuat…", "/api/pertandingan/buat", { nama: $("inNamaMatch").value, gaya: $("selGayaBuat").value });
+});
+$("formKode").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  aksiLobi($("btnKode"), "Bergabung…", "/api/pertandingan/gabung", { kode: $("inKode").value, gaya: $("selGayaKode").value });
+});
+$("btnSegarLobi").addEventListener("click", () => kirimDengan($("btnSegarLobi"), "Menyegarkan…", () => muat(true)));
+$("btnKeluarMatch").addEventListener("click", () => {
+  if (!confirm("Keluar dari pertandingan? Usulanmu di ronde ini dibuang. Bila semua pemain keluar, pertandingan berakhir.")) return;
+  kirimDengan($("btnKeluarMatch"), "Keluar…", async () => {
+    try {
+      await api("/api/pertandingan/keluar", {});
+      pilih = null;
+      await muat(true);
+    } catch (e) {
+      if (e.status === 401) return tampilLogin(SESI_HABIS);
+      pesan(e.message, true);
+    }
+  });
+});
+
+// ------------------------------------------------------------------ daftar akun baru
+function tampilDaftar(daftar) {
+  $("formLogin").classList.toggle("sembunyi", daftar);
+  $("formDaftar").classList.toggle("sembunyi", !daftar);
+  $("judulLogin").textContent = daftar ? "Daftar akun baru" : "Masuk";
+  (daftar ? $("dfUser") : $("inUser")).focus();
+}
+$("btnKeDaftar").addEventListener("click", () => tampilDaftar(true));
+$("btnKeMasuk").addEventListener("click", () => tampilDaftar(false));
+$("formDaftar").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  $("galatDaftar").textContent = "";
+  kirimDengan($("btnDaftar"), "Mendaftar…", async () => {
+    try {
+      await api("/api/daftar", { username: $("dfUser").value.trim().toLowerCase(), nama: $("dfNama").value.trim(), sandi: $("dfSandi").value });
+      $("dfSandi").value = "";
+      $("infoLogin").textContent = "";
+      await muat(true);
+    } catch (e) { $("galatDaftar").textContent = e.message; }
+  });
+});
+
 // Penyegaran berkala: status anggota lain dan hasil penilaian muncul tanpa muat ulang halaman.
 // Dilewati saat belum masuk, tab tidak aktif, permintaan/aksi berjalan, bidak sedang dipilih/diseret,
 // atau animasi papan sedang berjalan.
 function perluSegar() {
-  return !!data && !document.hidden && !pengendali && !sibuk && !mengirim && !seret && !pilih && !animasiPapanJalan;
+  return sudahMasuk && !document.hidden && !pengendali && !sibuk && !mengirim && !seret && !pilih && !animasiPapanJalan;
 }
 setInterval(() => { if (perluSegar()) muat(false); }, JEDA_SEGAR);
 document.addEventListener("visibilitychange", () => {

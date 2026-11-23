@@ -13,7 +13,7 @@ di laptop (lokal) maupun di server.
         │
         ▼
  Uvicorn  ──  FastAPI (app.py)
-        │        ├─ rute /api/*      login, ronde, usul, konsensus (Ketua saja), ulang, keluar
+        │        ├─ rute /api/*      daftar, login, lobi, pertandingan, ronde, usul, konsensus (Ketua)
         │        ├─ rute /*          berkas statis dari static/
         │        └─ middleware       header keamanan, pemeriksaan Origin
         │
@@ -48,19 +48,29 @@ docs/             dokumen ini
 test_*.py         tes algoritma, mesin, dan ujung ke ujung
 ```
 
-## 4. Alur data satu ronde
+## 4. Model data dan alur
 
-1. Anggota login → server membuat sesi (tabel `sesi`) dan mengirim cookie `sesi` (HttpOnly,
-   SameSite=Strict).
-2. Browser memanggil `GET /api/ronde` tiap beberapa detik untuk status ronde.
-3. Anggota menggerakkan bidak → `POST /api/usul`; server memeriksa legalitas (python-chess).
-4. Saat usulan ketiga masuk, server menjalankan **penilaian individual** di dalam kunci ronde: gabungkan
-   usulan → ukur C1–C5 → TOPSIS satu kali per anggota (bobot gayanya). Hasilnya disimpan di tabel
-   `penilaian_individual` dan usulan dikunci.
-5. **Ketua** (jabatan tertinggi, konstanta `KETUA`) memanggil `POST /api/konsensus`: voting Borda atas
-   penilaian semua anggota → mainkan langkah pemenang → balasan lawan → buka ronde berikutnya. Hasil
-   disimpan di tabel `konsensus` sebagai jejak audit. Akun lain mendapat 403.
-6. Semua akun melihat hasil yang sama lewat `GET /api/ronde`.
+Tabel utama: `pengguna` (akun), `sesi`, `pertandingan` (ruang main; `ketua_id`, `status`), `anggota`
+(keanggotaan: `gaya`, `aktif`, `terakhir`), `kasus` (satu baris per ronde), `usulan`, `penilaian_individual`, dan
+`konsensus` (jejak audit satu keputusan). Banyak pertandingan bisa berjalan bersamaan; semua data ronde terikat
+`pertandingan_id`.
+
+Alur satu pertandingan:
+
+1. Pengguna mendaftar atau login (`/api/daftar`, `/api/login`), lalu membuat atau bergabung ke pertandingan
+   (`/api/pertandingan/buat`, `/gabung`). Pembuat menjadi Ketua; gaya main dipilih unik per pertandingan.
+2. Browser memanggil `GET /api/ronde` tiap beberapa detik. Setiap permintaan juga menandai pemain masih aktif.
+3. Anggota menggerakkan bidak, `POST /api/usul` memeriksa legalitas (python-chess).
+4. Saat semua anggota yang ada sudah mengusulkan, server membuat **penilaian individual** di dalam kunci ronde:
+   gabungkan usulan, ukur C1 sampai C5, TOPSIS satu kali per anggota (bobot gayanya). Usulan dikunci.
+5. **Ketua** memanggil `POST /api/konsensus`: voting Borda atas penilaian semua anggota, langkah pemenang
+   dimainkan, lawan membalas dengan Stockfish (catur biasa), ronde berikutnya dibuka.
+6. Semua anggota melihat hasil yang sama lewat `GET /api/ronde`.
+
+Perubahan anggota di tengah ronde ditangani satu fungsi (`setelah_perubahan_anggota`): bila tidak ada pemain,
+pertandingan berakhir; bila Ketua keluar, anggota paling awal menjadi Ketua; penilaian individual yang belum
+dikonsensuskan dibuang dan dibuat ulang bila semua pemain yang tersisa sudah mengusulkan. Pemain yang tidak
+mengirim permintaan selama `SKAKMAT_TIMEOUT_AKTIF` detik (bawaan 120) dikeluarkan dengan jalur yang sama.
 
 ## 5. Menjalankan secara lokal
 
@@ -126,6 +136,7 @@ User=skakmat
 | `SKAKMAT_COOKIE_SECURE` | `0` | `1` bila memakai HTTPS |
 | `SKAKMAT_PROXY_IPS` | `127.0.0.1` | proxy yang dipercaya untuk `X-Forwarded-For` |
 | `SKAKMAT_DOCS` | `0` | `1` membuka dokumentasi API di `/api/docs` |
+| `SKAKMAT_TIMEOUT_AKTIF` | `120` | detik tanpa aktivitas sebelum pemain dianggap keluar |
 
 ## 7. Batasan dan arah pengembangan
 

@@ -9,6 +9,11 @@ Set-Location $PSScriptRoot
 $py = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $py)) { $py = "python" }
 $cf = (Get-Command cloudflared -ErrorAction SilentlyContinue).Source
+if (-not $cf) {   # PATH sesi ini belum diperbarui setelah pemasangan: cari di lokasi pemasangan umum
+    $kandidat = @("${env:ProgramFiles(x86)}\cloudflared\cloudflared.exe", "$env:ProgramFiles\cloudflared\cloudflared.exe",
+                  "$env:LOCALAPPDATA\Microsoft\WinGet\Links\cloudflared.exe")
+    $cf = $kandidat | Where-Object { Test-Path $_ } | Select-Object -First 1
+}
 if (-not $cf) {
     Write-Host "cloudflared belum terpasang. Pasang sekali dengan:  winget install --id Cloudflare.cloudflared" -ForegroundColor Yellow
     exit 1
