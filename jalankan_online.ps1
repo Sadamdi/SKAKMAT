@@ -50,8 +50,8 @@ try {
     Write-Host "SKAKMAT online. Bagikan alamat ini ke teman (satu alamat untuk semua):" -ForegroundColor Green
     Write-Host "  $url" -ForegroundColor Cyan
     Write-Host ""
-    Write-Host "Akun (satu orang satu akun, boleh beda browser/perangkat):"
-    Write-Host "  anggota1 (Ketua)  kata sandi: $s1"
+    Write-Host "Akun demo (atau teman bisa Daftar akun baru di halaman masuk). Satu orang satu akun, boleh beda browser/perangkat:"
+    Write-Host "  anggota1          kata sandi: $s1"
     Write-Host "  anggota2          kata sandi: $s2"
     Write-Host "  anggota3          kata sandi: $s3"
     Write-Host ""
