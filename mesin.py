@@ -462,8 +462,8 @@ def _analisis_banyak(daftar_posisi, kedalaman):
 
 def langkah_lawan(fen):
     """Balasan lawan untuk posisi fen (lawan berjalan). Stockfish kedalaman rendah bila ada; tanpa engine
-    dipakai aturan sederhana yang deterministik: tangkapan paling menguntungkan, selain itu langkah
-    pertama menurut urutan UCI. Mengembalikan (Move, keterangan sumber) atau (None, alasan)."""
+    dipakai aturan sederhana yang deterministik: tangkapan paling menguntungkan, kecuali ada skakmat dalam satu langkah
+    (selalu diambil); selain itu langkah pertama menurut urutan UCI. Mengembalikan (Move, keterangan sumber) atau (None, alasan)."""
     if not pustaka_ada():
         return None, "Pustaka python-chess tidak terpasang di server."
     b, pesan = papan(fen)
@@ -494,8 +494,15 @@ def langkah_lawan(fen):
         finally:
             _kunci.release()
     sah = sorted(b.legal_moves, key=lambda m: m.uci())
-    terbaik = max(sah, key=lambda m: (_untung_sederhana(b, m), -sah.index(m)))
+    terbaik = max(sah, key=lambda m: (_skakmat(b, m), _untung_sederhana(b, m), -sah.index(m)))
     return terbaik, f"aturan sederhana tanpa engine ({e_alasan})"
+
+
+def _skakmat(b, m):
+    """True bila langkah m langsung mengakhiri permainan dengan skakmat (selalu dipilih lebih dulu)."""
+    b2 = b.copy(stack=False)
+    b2.push(m)
+    return b2.is_checkmate()
 
 
 def _untung_sederhana(b, m):
