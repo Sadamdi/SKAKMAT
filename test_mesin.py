@@ -148,12 +148,23 @@ def masuk_semua():
 USULAN = {"anggota1": "d2d4", "anggota2": "d2d3", "anggota3": "e1g1"}
 
 
+def dengan_konsensus(klien, st, j):
+    """Usulan terakhir hanya menyiapkan penilaian individual; Ketua (anggota1) lalu menjalankan konsensus.
+    Mengembalikan respons usulan yang ditambah hasil konsensus, supaya skenario di bawah tetap ringkas."""
+    if st == 200 and j.get("penilaian_siap"):
+        st2, j2 = klien["anggota1"].minta("/api/konsensus", {})
+        if st2 == 200:
+            return st, {**j, "dinilai": True, "konsensus": j2["konsensus"]}
+    return st, j
+
+
 def satu_ronde(klien):
     """Ketiga anggota mengusulkan; respons usulan terakhir (yang memicu penilaian) dikembalikan."""
     for u in ("anggota1", "anggota2"):
         klien[u].minta("/api/usul", {"langkah": USULAN[u]})
     t = time.time()
     st, j = klien["anggota3"].minta("/api/usul", {"langkah": USULAN["anggota3"]})
+    st, j = dengan_konsensus(klien, st, j)
     return st, j, time.time() - t
 
 
@@ -212,6 +223,7 @@ def engine_menggantung(k):
     k["anggota2"].minta("/api/usul", {"langkah": sah[1]})
     t = time.time()
     st, j = k["anggota3"].minta("/api/usul", {"langkah": sah[2]})
+    st, j = dengan_konsensus(k, st, j)
     d = time.time() - t
     cek(st == 200 and j["dinilai"] and d < 1.5, f"kegagalan diingat sebentar: ronde 2 dinilai tanpa menunggu engine lagi ({d:.2f} s)")
 
@@ -222,7 +234,7 @@ def tanpa_pustaka(k):
         "tanpa python-chess: papan tetap tampil, tanpa langkah yang bisa dimainkan")
     st, j = k["anggota1"].minta("/api/usul", {"langkah": "d2d4"})
     cek(st == 503 and "python-chess" in j["galat"], f"tanpa python-chess: usulan ditolak 503 dengan alasan: {j['galat']!r}")
-    st, j = k["anggota2"].minta("/api/konsensus", {})
+    st, j = k["anggota1"].minta("/api/konsensus", {})
     cek(st == 409, "tanpa python-chess: tidak ada penilaian palsu")
 
 

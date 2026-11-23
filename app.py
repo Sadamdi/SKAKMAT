@@ -19,6 +19,7 @@ dan lawan memakai aturan sederhana; keduanya ditandai di tampilan).
 Backend memakai FastAPI + Uvicorn; front end statis di static/. Lihat docs/ARSITEKTUR.md.
 """
 import argparse
+from contextlib import asynccontextmanager
 import hashlib
 import hmac
 import json
@@ -55,6 +56,10 @@ AKUN = [  # (username, nama, gaya, sandi)
     ("anggota2", "Anggota 2", "seimbang", "anggota123-2"),
     ("anggota3", "Anggota 3", "bertahan", "anggota123-3"),
 ]
+
+# Jabatan tertinggi: hanya akun ini yang boleh menjalankan konsensus (voting Borda) setelah semua anggota
+# selesai dinilai. Anggota lain tetap setara dalam mengusulkan langkah dan menerima hasil.
+KETUA = "anggota1"
 
 # Posisi awal setiap permainan: Giuoco Piano setelah 1.e4 e5 2.Nf3 Nc6 3.Bc4 Bc5 4.c3 Nf6, putih berjalan.
 POSISI_AWAL = {
@@ -93,6 +98,11 @@ CREATE TABLE IF NOT EXISTS usulan(
     kasus_id INTEGER NOT NULL REFERENCES kasus(id) ON DELETE CASCADE,
     pengguna_id INTEGER NOT NULL REFERENCES pengguna(id),
     langkah TEXT NOT NULL, san TEXT NOT NULL, waktu REAL NOT NULL, PRIMARY KEY(kasus_id, pengguna_id));
+-- Penilaian individual per ronde: C1-C5 dan TOPSIS tiap anggota. Ada begitu semua anggota mengusulkan;
+-- konsensus (Borda) baru dijalankan Ketua sesudahnya.
+CREATE TABLE IF NOT EXISTS penilaian_individual(
+    kasus_id INTEGER PRIMARY KEY REFERENCES kasus(id) ON DELETE CASCADE,
+    alternatif TEXT NOT NULL, kriteria TEXT NOT NULL, topsis TEXT NOT NULL, waktu REAL NOT NULL);
 -- Jejak audit lengkap satu keputusan: alternatif, nilai C1-C5, peringkat TOPSIS per gaya, Borda, langkah.
 CREATE TABLE IF NOT EXISTS konsensus(
     kasus_id INTEGER PRIMARY KEY REFERENCES kasus(id) ON DELETE CASCADE,
@@ -125,7 +135,7 @@ def migrasi_bila_perlu():
                          f"({e}). Hapus file itu secara manual, lalu jalankan lagi.")
     with sqlite3.connect(DB_PATH) as c:
         c.execute("PRAGMA foreign_keys = OFF")
-        for t in ("konsensus", "penilaian", "usulan", "kasus", "pengguna"):
+        for t in ("konsensus", "penilaian_individual", "penilaian", "usulan", "kasus", "pengguna"):
             c.execute(f"DROP TABLE IF EXISTS {t}")
     print(f"Basis data skema lama (versi {versi}) dicadangkan ke {cadangan.name} dan diganti skema baru.", flush=True)
 
@@ -181,6 +191,7 @@ def peserta(c):
     for p in out:
         p["gaya_nama"] = gdss.PROFIL[p["gaya"]]["nama"]
         p["bobot"] = gdss.PROFIL[p["gaya"]]["bobot"]
+        p["ketua"] = p["username"] == KETUA
     return out
 
 
@@ -210,10 +221,22 @@ def hasil_terakhir(c, kasus):
     return baca_konsensus(c, r["kasus_id"]) if r else None
 
 
-def jalankan_penilaian(c, kasus):
-    """Penilaian otomatis satu ronde. Mengembalikan (konsensus, None) atau (None, (status_http, pesan))."""
+def baca_penilaian(c, kasus_id):
+    r = c.execute("SELECT * FROM penilaian_individual WHERE kasus_id=?", (kasus_id,)).fetchone()
+    if not r:
+        return None
+    return {"kasus_id": r["kasus_id"], "alternatif": json.loads(r["alternatif"]),
+            "kriteria": json.loads(r["kriteria"]), "topsis": json.loads(r["topsis"]), "waktu": r["waktu"]}
+
+
+def siapkan_penilaian(c, kasus):
+    """Tahap 1, otomatis begitu semua anggota mengusulkan: gabungkan usulan, ukur C1-C5, jalankan TOPSIS
+    tiap anggota dengan bobot gayanya. Hasilnya disimpan sebagai penilaian individual; Borda belum dijalankan.
+    Mengembalikan (penilaian, None) atau (None, (status_http, pesan))."""
     if c.execute("SELECT 1 FROM konsensus WHERE kasus_id=?", (kasus["id"],)).fetchone():
         return None, (409, "Ronde ini sudah dinilai.")
+    if c.execute("SELECT 1 FROM penilaian_individual WHERE kasus_id=?", (kasus["id"],)).fetchone():
+        return baca_penilaian(c, kasus["id"]), None
     status = status_usulan(c, kasus["id"])
     belum = [s["nama"] for s in status if not s["sudah"]]
     if belum:
@@ -244,6 +267,21 @@ def jalankan_penilaian(c, kasus):
     kriteria = {"sumber": krit["sumber"], "nilai": matriks,
                 "rincian": [x["rincian"] for x in krit["alternatif"]],
                 "engine": [x["engine"] for x in krit["alternatif"]]}
+    c.execute("INSERT INTO penilaian_individual(kasus_id,alternatif,kriteria,topsis,waktu) VALUES(?,?,?,?,?)",
+              (kasus["id"], json.dumps(alternatif), json.dumps(kriteria), json.dumps(topsis), time.time()))
+    return baca_penilaian(c, kasus["id"]), None
+
+
+def jalankan_konsensus(c, kasus):
+    """Tahap 2, dijalankan Ketua: voting Borda atas penilaian individual semua anggota, lalu langkah pemenang
+    dimainkan, lawan membalas, dan ronde berikutnya dibuka. Mengembalikan (konsensus, None) atau (None, (status, pesan))."""
+    if c.execute("SELECT 1 FROM konsensus WHERE kasus_id=?", (kasus["id"],)).fetchone():
+        return None, (409, "Ronde ini sudah dinilai.")
+    pen = baca_penilaian(c, kasus["id"])
+    if not pen:
+        return None, (409, "Belum semua anggota selesai dinilai: konsensus baru bisa dijalankan setelah semua mengusulkan.")
+    alternatif, kriteria, topsis = pen["alternatif"], pen["kriteria"], pen["topsis"]
+    k = gdss.konsensus_gaya(kriteria["nilai"], [t["gaya"] for t in topsis], [a["dukungan"] for a in alternatif])
     menang = alternatif[k["pemenang"]]
 
     tim = kasus["fen"].split()[1] == "w"
@@ -263,6 +301,13 @@ def jalankan_penilaian(c, kasus):
                menang["uci"], san, fen_setelah, lawan, lawan_san, lawan_sumber, akhir, time.time()))
     return baca_konsensus(c, kasus["id"]), None
 
+
+def jalankan_penilaian(c, kasus):
+    """Seluruh alur sekaligus (tahap 1 lalu tahap 2). Dipakai tes; di aplikasi, tahap 2 hanya oleh Ketua."""
+    pen, galat = siapkan_penilaian(c, kasus)
+    if galat:
+        return None, galat
+    return jalankan_konsensus(c, kasus)
 
 
 ENDPOINT_LAMA = {"/api/nilai", "/api/kasus", "/api/kasus-baru", "/api/usul-kandidat"}
@@ -291,12 +336,17 @@ def pengguna_dari_cookie(c, token):
 
 
 # ------------------------------------------------------------------ aplikasi web (FastAPI)
-app = FastAPI(title="SKAKMAT GDSS", version="2.0",
+@asynccontextmanager
+async def siklus(_app):
+    saat_mulai()
+    yield
+
+
+app = FastAPI(title="SKAKMAT GDSS", version="2.1", lifespan=siklus,
               docs_url="/api/docs" if os.environ.get("SKAKMAT_DOCS") == "1" else None,
               redoc_url=None, openapi_url="/api/openapi.json" if os.environ.get("SKAKMAT_DOCS") == "1" else None)
 
 
-@app.on_event("startup")
 def saat_mulai():
     siapkan_db()
     if not mesin.pustaka_ada():
@@ -369,14 +419,19 @@ def get_ronde(c, user, data, request):
     saya = c.execute("SELECT langkah, san, waktu FROM usulan WHERE kasus_id=? AND pengguna_id=?",
                      (kasus["id"], user["id"])).fetchone()
     konsensus = baca_konsensus(c, kasus["id"])
-    bisa_usul = mesin.pustaka_ada() and not konsensus and not kasus["selesai"]
+    penilaian = None if konsensus else baca_penilaian(c, kasus["id"])
+    bisa_usul = mesin.pustaka_ada() and not konsensus and not penilaian and not kasus["selesai"]
     return JSONResponse({
         "pengguna": user, "peserta": status, "kasus": kasus,
         "kriteria": gdss.KRITERIA, "profil": gdss.PROFIL,
         "semua_sudah": all(s["sudah"] for s in status),
         "usulan_saya": {"uci": saya["langkah"], "san": saya["san"], "waktu": saya["waktu"]} if saya else None,
         "langkah_sah": mesin.langkah_sah(kasus["fen"]) if bisa_usul else [],
-        "konsensus": konsensus,                       # ronde aktif sudah dinilai (hanya bila permainan selesai)
+        "ketua": KETUA,
+        "saya_ketua": user["username"] == KETUA,
+        "penilaian": penilaian,                       # penilaian individual semua anggota, menunggu konsensus Ketua
+        "bisa_konsensus": bool(penilaian) and user["username"] == KETUA,
+        "konsensus": konsensus,                       # ronde aktif sudah dikonsensuskan (hanya bila permainan selesai)
         "hasil_terakhir": konsensus or hasil_terakhir(c, kasus),
         "server": {"python_chess": mesin.pustaka_ada(), "stockfish": bool(mesin.path_engine())},
     })
@@ -394,6 +449,8 @@ def post_usul(c, user, data, request):
             return galat(409, "Permainan sudah selesai: " + kasus["selesai"] + " Mulai ronde baru.")
         if c.execute("SELECT 1 FROM konsensus WHERE kasus_id=?", (kasus["id"],)).fetchone():
             return galat(409, "Ronde ini sudah dinilai; usulan dikunci.")
+        if c.execute("SELECT 1 FROM penilaian_individual WHERE kasus_id=?", (kasus["id"],)).fetchone():
+            return galat(409, "Semua anggota sudah dinilai; usulan dikunci sambil menunggu Ketua menjalankan konsensus.")
         if not mesin.pustaka_ada():
             return galat(503, "Server tidak bisa memeriksa langkah: pustaka python-chess tidak terpasang.")
         m, pesan = mesin.validasi_usulan(kasus["fen"], langkah)
@@ -403,22 +460,29 @@ def post_usul(c, user, data, request):
         c.execute("INSERT OR REPLACE INTO usulan(kasus_id,pengguna_id,langkah,san,waktu) VALUES(?,?,?,?,?)",
                   (kasus["id"], user["id"], m.uci(), san, time.time()))
         c.commit()
-        out = {"ok": True, "usulan": {"uci": m.uci(), "san": san}, "dinilai": False}
+        out = {"ok": True, "usulan": {"uci": m.uci(), "san": san}, "dinilai": False, "penilaian_siap": False}
         if all(s["sudah"] for s in status_usulan(c, kasus["id"])):
-            hasil, g = jalankan_penilaian(c, kasus)
+            pen, g = siapkan_penilaian(c, kasus)
             c.commit()
             if g:
                 out["galat_penilaian"] = g[1]
             else:
-                out.update(dinilai=True, konsensus=hasil)
+                out.update(penilaian_siap=True, penilaian=pen)
         return JSONResponse(out)
 
 
 def post_konsensus(c, user, data, request):
-    """Menjalankan ulang penilaian bila otomatisnya gagal (mis. server sempat mati). Semua akun boleh."""
+    """Konsensus Borda. Hanya Ketua (jabatan tertinggi), dan hanya setelah semua anggota selesai dinilai."""
+    if user["username"] != KETUA:
+        return galat(403, "Hanya Ketua (jabatan tertinggi) yang boleh menjalankan konsensus.")
     with _kunci_ronde:
         kasus = kasus_aktif(c)
-        hasil, g = jalankan_penilaian(c, kasus)
+        if c.execute("SELECT 1 FROM penilaian_individual WHERE kasus_id=?", (kasus["id"],)).fetchone() is None:
+            pen, g = siapkan_penilaian(c, kasus)    # bila tahap 1 sempat gagal (mis. engine mati), coba lagi
+            c.commit()
+            if g:
+                return galat(*g)
+        hasil, g = jalankan_konsensus(c, kasus)
         c.commit()
     if g:
         return galat(*g)

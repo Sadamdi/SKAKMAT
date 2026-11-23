@@ -92,11 +92,10 @@ def alur(klien):
         if st != 400:
             break
     cek(st == 400, "usulan bukan teks / bukan JSON ditolak (400)")
-    for u, k in klien.items():
-        st, _ = k.minta("/api/konsensus", {})
-        if st != 409:
-            break
-    cek(st == 409, "semua akun boleh meminta konsensus (bukan 403), ditolak 409 karena usulan belum lengkap")
+    st, _ = a2.minta("/api/konsensus", {})
+    cek(st == 403, "anggota biasa tidak boleh menjalankan konsensus (403)")
+    st, _ = a1.minta("/api/konsensus", {})
+    cek(st == 409, "Ketua pun ditolak (409) selama usulan belum lengkap")
     st, j = a1.minta("/api/usul", {"langkah": "d2d3"})
     cek(st == 200 and j["usulan"]["san"] == "d3" and j["dinilai"] is False, "anggota1 mengusulkan d3")
     st, j = a1.minta("/api/usul", {"langkah": "d2d4"})
@@ -110,7 +109,20 @@ def alur(klien):
     t = time.time()
     st, j = a3.minta("/api/usul", {"langkah": "e1g1"})
     d = time.time() - t
-    cek(st == 200 and j["dinilai"] is True, f"usulan ketiga langsung memicu penilaian otomatis ({d:.2f} s)")
+    cek(st == 200 and j["penilaian_siap"] is True and j["dinilai"] is False and "konsensus" not in j
+        and "borda" not in json.dumps(j), f"usulan ketiga menyiapkan penilaian individual ({d:.2f} s); konsensus belum dijalankan")
+    for u, kl in klien.items():
+        st, jr = kl.minta("/api/ronde")
+        cek(st == 200 and jr["penilaian"] and len(jr["penilaian"]["topsis"]) == 3 and jr["konsensus"] is None
+            and jr["hasil_terakhir"] is None and jr["bisa_konsensus"] == (u == "anggota1") and "borda" not in json.dumps(jr["penilaian"]),
+            f"{u} melihat penilaian individual ketiga anggota (tanpa Borda); tombol konsensus hanya untuk Ketua")
+    for u in ("anggota2", "anggota3"):
+        st, _ = klien[u].minta("/api/konsensus", {})
+        cek(st == 403, f"{u} (bukan Ketua) ditolak menjalankan konsensus (403)")
+    st, j = a1.minta("/api/konsensus", {})
+    cek(st == 200 and j["konsensus"], "Ketua menjalankan konsensus Borda")
+    st, _ = a1.minta("/api/konsensus", {})
+    cek(st == 409, "konsensus kedua pada ronde yang sama ditolak (409)")
     k = j["konsensus"]
     alt = k["alternatif"]
     cek([a["san"] for a in alt] == ["d4", "O-O"] and [a["dukungan"] for a in alt] == [2, 1],
@@ -151,10 +163,14 @@ def alur(klien):
                            args=(u, m)) for u, m in (("anggota2", "d2d3"), ("anggota3", "b2b4"))]
     [t.start() for t in th]
     [t.join() for t in th]
-    dinilai = [j.get("dinilai") for st, j in hasil.values()]
+    siap = [j.get("penilaian_siap") for st, j in hasil.values()]
     st, j = a1.minta("/api/ronde")
-    cek(sorted(dinilai) == [False, True] and j["kasus"]["nomor"] == 2 and len(j["hasil_terakhir"]["alternatif"]) == 3,
-        "dua usulan serentak: penilaian berjalan tepat sekali, satu ronde berikutnya")
+    cek(sorted(siap) == [False, True] and j["kasus"]["nomor"] == 1 and len(j["penilaian"]["alternatif"]) == 3,
+        "dua usulan serentak: penilaian individual dibuat tepat sekali")
+    a1.minta("/api/konsensus", {})
+    st, j = a1.minta("/api/ronde")
+    cek(j["kasus"]["nomor"] == 2 and len(j["hasil_terakhir"]["alternatif"]) == 3,
+        "konsensus Ketua membuka tepat satu ronde berikutnya")
 
 
 def main():

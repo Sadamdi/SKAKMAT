@@ -95,6 +95,7 @@ function namaDm(orang, tambahan = "", denganGaya = true) {
   const w = el("span", `nama-dm ${kelasDm(orang.id)}`);
   w.append(lencana(orang), el("span", "", orang.nama + tambahan));
   if (denganGaya && orang.gaya_nama) w.append(el("span", "tag-gaya", orang.gaya_nama));
+  if (orang.ketua) w.append(el("span", "tag-gaya tag-ketua", "Ketua"));
   return w;
 }
 
@@ -250,7 +251,7 @@ function alasanTidakInteraktif() {
   if (!data.server.python_chess) return "Server tidak bisa memeriksa langkah (python-chess tidak terpasang), jadi papan hanya bisa dilihat.";
   if (data.kasus.selesai || (data.konsensus && data.konsensus.akhir)) return "Permainan sudah selesai. Tekan Ronde baru untuk bermain lagi.";
   if (animasiPapanJalan) return "Sedang memperlihatkan langkah ronde sebelumnya…";
-  return "Ronde ini sedang dinilai.";
+  return "Semua anggota sudah dinilai. Menunggu Ketua menjalankan konsensus.";
 }
 
 async function kirimUsulan(t) {
@@ -261,10 +262,10 @@ async function kirimUsulan(t) {
   try {
     const j = await api("/api/usul", { langkah: t.uci });
     pilih = null;
-    if (j.dinilai) {
-      pesanPapan(`Usulan ${j.usulan.san} terkirim. Usulan Anda yang terakhir; penilaian otomatis selesai.`);
+    if (j.penilaian_siap) {
+      pesanPapan(`Usulan ${j.usulan.san} terkirim. Usulan Anda yang terakhir; penilaian individual selesai, menunggu Ketua menjalankan konsensus.`);
     } else if (j.galat_penilaian) {
-      pesanPapan(`Usulan ${j.usulan.san} tersimpan, tapi penilaian otomatis gagal: ${j.galat_penilaian}`, true);
+      pesanPapan(`Usulan ${j.usulan.san} tersimpan, tapi penilaian individual gagal dibuat: ${j.galat_penilaian}`, true);
     } else {
       pesanPapan(`Usulan ${j.usulan.san} terkirim. Masih bisa diganti dengan menggerakkan bidak lain sampai semua anggota mengusulkan.`);
     }
@@ -390,7 +391,7 @@ function renderRonde() {
     rs.replaceChildren("Menunggu usulan dari: ");
     belum.forEach((p, i) => { if (i) rs.append(", "); rs.append(namaDm(p, "", false)); });
     rs.append(".");
-  } else rs.textContent = "Semua anggota sudah mengusulkan.";
+  } else rs.textContent = data.penilaian ? "Semua anggota sudah dinilai; menunggu Ketua menjalankan konsensus." : "Semua anggota sudah mengusulkan.";
   rs.classList.toggle("tunggu-kotak", !akhir && belum.length > 0);
 
   // papan: hanya digambar ulang bila ada yang berubah, supaya pilihan & fokus tidak hilang saat penyegaran
@@ -404,6 +405,59 @@ function renderRonde() {
     gambarPapan(fenSekarang(), sorotSekarang());
   } else if (!animasiPapanJalan) perbaruiTanda();
   if (!data.server.python_chess) pesanPapan(alasanTidakInteraktif(), true);
+  renderIndividual();
+}
+
+// ------------------------------------------------------------------ penilaian individual (sebelum konsensus Ketua)
+let tandaIndividual = "";
+
+function renderIndividual() {
+  const pen = data.penilaian;
+  $("kartuIndividual").classList.toggle("sembunyi", !pen);
+  if (!pen) { tandaIndividual = ""; return; }
+  const ketua = data.peserta.find((p) => p.ketua);
+  $("btnKonsensus").classList.toggle("sembunyi", !data.bisa_konsensus);
+  $("infoKonsensus").textContent = data.bisa_konsensus
+    ? "Semua anggota sudah dinilai. Sebagai Ketua (jabatan tertinggi), Anda menjalankan voting Borda untuk memutuskan langkah kelompok."
+    : `Semua anggota sudah dinilai. Menunggu Ketua (${ketua ? ketua.nama : "-"}) menjalankan konsensus.`;
+  const tanda = String(pen.kasus_id);
+  if (tanda === tandaIndividual) return;
+  tandaIndividual = tanda;
+  const alt = pen.alternatif;
+  const du = $("daftarUsulanInd");
+  du.replaceChildren();
+  alt.forEach((a) => a.pengusul.forEach((pid) => {
+    const li = el("li");
+    li.append(namaDm(orangDenganId(pid)), el("span", "langkah", a.san));
+    if (a.dukungan > 1) li.append(el("span", "dukungan", `usulan ganda: ${a.dukungan} orang`));
+    du.append(li);
+  }));
+  const kepala = [el("span", "", "Alternatif")];
+  data.kriteria.forEach((k) => {
+    const s = el("span");
+    s.append(el("span", "kode", `${k.kode} ${k.nama}`), el("span", "ket", k.jenis === "cost" ? "cost: makin besar makin buruk" : "benefit"));
+    kepala.push(s);
+  });
+  tabel($("tabelKriteriaInd"), "Nilai C1 sampai C5 tiap alternatif, diukur mesin", kepala,
+    alt.map((a, i) => [`${a.san}${a.dukungan > 1 ? ` (${a.dukungan} usulan)` : ""}`, ...pen.kriteria.nilai[i].map((v) => f(v, 2))]));
+  tandaiCost($("tabelKriteriaInd"));
+  const wadah = $("tigaIndividual");
+  wadah.replaceChildren();
+  pen.topsis.forEach((t) => {
+    const orang = { ...orangDenganId(t.pengguna_id), nama: t.nama, gaya_nama: t.gaya_nama };
+    const blok = el("section", `blok-topsis ${kelasDm(t.pengguna_id)}`);
+    const judul = el("h4");
+    judul.append(namaDm(orang));
+    blok.append(judul, el("p", "bobot", "Bobot " + data.kriteria.map((k, jj) => `${k.kode} ${t.bobot[jj]}`).join(" · ")));
+    const tb = el("table");
+    tabel(tb, `TOPSIS gaya ${t.gaya_nama} (${t.nama})`, ["Alternatif", "D+", "D−", "V", "Peringkat"],
+      alt.map((a, i) => [a.san, f(t.hasil.d_plus[i]), f(t.hasil.d_min[i]), f(t.hasil.v[i]), String(t.hasil.rank[i])]),
+      (i) => (t.hasil.rank[i] === 1 ? "menang" : ""));
+    const g = el("div", "gulir");
+    g.append(tb);
+    blok.append(g, el("p", "pilihan", `Pilihan gaya ${t.gaya_nama.toLowerCase()}: ${alt[t.hasil.rank.indexOf(1)].san}`));
+    wadah.append(blok);
+  });
 }
 
 // ------------------------------------------------------------------ animasi papan setelah penilaian
@@ -800,6 +854,16 @@ $("btnRondeBaru").addEventListener("click", () => {
     }
   });
 });
+$("btnKonsensus").addEventListener("click", () => kirimDengan($("btnKonsensus"), "Menjalankan…", async () => {
+  try {
+    await api("/api/konsensus", {});
+    pesan("Konsensus Borda dijalankan.", false);
+    await muat(true);
+  } catch (e) {
+    if (e.status === 401) return tampilLogin(SESI_HABIS);
+    pesan(e.message, true);
+  }
+}));
 $("btnPutar").addEventListener("click", putarAnimasi);
 gerakDikurangi.addEventListener("change", () => { if (modelAnimasi) putarAnimasi(); });
 $("btnSegar").addEventListener("click", () => kirimDengan($("btnSegar"), "Menyegarkan…", () => muat(true)));

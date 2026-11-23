@@ -3,12 +3,13 @@
 Sistem Kolaborasi Analis untuk Keputusan Melangkah Antar Tim. Project akhir Praktikum Sistem
 Informasi, Kelompok 2, Kelas B.
 
-Tiga akun **setara** membuka papan yang sama dan memainkan bidak putih bersama. Tiap ronde, setiap
-anggota mengusulkan satu langkah dengan **menggerakkan bidak di papan** — itu satu-satunya input
-pengguna di seluruh aplikasi (selain login). Begitu ketiga usulan masuk, sistem menilai otomatis:
-nilai C1–C5 diukur mesin dari posisi papan, TOPSIS dijalankan sekali per anggota dengan bobot gaya
-mainnya, lalu voting Borda menggabungkan ketiga peringkat itu menjadi satu keputusan kelompok.
-Langkah pemenang dimainkan, lawan membalas, dan ronde berikutnya dimulai tanpa input tambahan.
+Tiga decision maker membuka papan yang sama dan memainkan bidak putih bersama. Tiap ronde, setiap
+anggota mengusulkan satu langkah dengan **menggerakkan bidak di papan**. Begitu ketiga usulan masuk,
+**penilaian individual** tiap anggota langsung tersedia: nilai C1–C5 diukur mesin dari posisi papan,
+lalu TOPSIS dijalankan untuk tiap anggota dengan bobot gaya mainnya. Sesudah itu **Ketua (akun dengan
+jabatan tertinggi) menjalankan konsensus dengan voting Borda** yang menggabungkan ketiga peringkat
+menjadi satu keputusan kelompok. Langkah pemenang dimainkan, lawan membalas, dan ronde berikutnya
+dimulai. Semua akun dapat melihat hasil konsensus.
 
 ## Arsitektur
 
@@ -18,6 +19,33 @@ panduan deploy ada di [docs/ARSITEKTUR.md](docs/ARSITEKTUR.md).
 
 Cara tercepat dengan Docker (Stockfish sudah termasuk): `docker compose up --build`, lalu buka
 http://127.0.0.1:8000.
+
+## Jalankan cepat di Windows (lokal)
+
+Buka PowerShell, masuk ke folder proyek, pasang paket, lalu jalankan:
+
+```powershell
+cd "D:\adam kuliah\Semester 5\Information System Praktikum\UAS\SKAKMAT"
+python -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python app.py
+```
+
+Buka http://127.0.0.1:8000 di browser. Berhenti dengan Ctrl+C. Pemasangan paket cukup sekali; lain kali
+cukup `cd` lalu perintah terakhir. Tanpa Stockfish aplikasi tetap jalan (lihat tabel di bawah).
+
+Untuk mencoba alur tiga akun di satu laptop, buka tiga jendela browser berbeda (atau satu jendela
+biasa dan dua jendela penyamaran) supaya cookie sesinya tidak bertabrakan, lalu masuk sebagai
+`anggota1` (Ketua), `anggota2`, dan `anggota3`. Setelah ketiganya mengusulkan langkah, hanya akun
+`anggota1` yang punya tombol **Jalankan konsensus (voting Borda)**.
+
+Menjalankan tes:
+
+```powershell
+.venv\Scripts\python test_gdss.py
+.venv\Scripts\python test_mesin.py
+.venv\Scripts\python test_e2e.py
+```
 
 ## Cara menjalankan
 
@@ -90,15 +118,16 @@ lama. Hapus `skakmat.db` untuk mengulang dari awal.
 
 ## Akun
 
-| Akun | Kata sandi | Gaya main | Bobot C1–C5 |
-|---|---|---|---|
-| anggota1 | anggota123-1 | Menyerang | 20 · 15 · 20 · 30 · 15 |
-| anggota2 | anggota123-2 | Seimbang | 25 · 20 · 20 · 20 · 15 |
-| anggota3 | anggota123-3 | Bertahan | 30 · 30 · 15 · 10 · 15 |
+| Akun | Kata sandi | Jabatan | Gaya main | Bobot C1–C5 |
+|---|---|---|---|---|
+| anggota1 | anggota123-1 | **Ketua** (jabatan tertinggi) | Menyerang | 20 · 15 · 20 · 30 · 15 |
+| anggota2 | anggota123-2 | Anggota | Seimbang | 25 · 20 · 20 · 20 · 15 |
+| anggota3 | anggota123-3 | Anggota | Bertahan | 30 · 30 · 15 · 10 · 15 |
 
-Ketiganya **setara** — tidak ada jabatan, tidak ada akun yang punya hak istimewa. Yang membedakan
-hanya gaya main. Kata sandi di atas hanya akun demo; ubah pada daftar `AKUN` di `app.py` sebelum
-basis data dibuat.
+Ketiganya sama-sama mengusulkan langkah dan menerima hasil. Yang membedakan: **Ketua** satu-satunya yang
+boleh menjalankan konsensus Borda (konstanta `KETUA` di `app.py`), dan tiap akun punya gaya main
+sendiri. Kata sandi di atas hanya akun demo; ubah pada daftar `AKUN` di `app.py` sebelum basis data
+dibuat.
 
 ## Alur penggunaan
 
@@ -109,10 +138,12 @@ basis data dibuat.
    server dan bidak kembali ke tempatnya dengan pesan singkat.
 3. **Usulan masih bisa diganti** (dengan menggerakkan bidak lain) sampai anggota terakhir mengusulkan.
    Usulan anggota lain baru terlihat setelah ronde dinilai, supaya tiap usulan tetap independen.
-4. **Begitu usulan ketiga masuk, penilaian berjalan otomatis** — tidak ada tombol "jalankan
-   konsensus". Semua akun melihat hasil yang sama: nilai C1–C5, tiga tabel TOPSIS per gaya, tabel
-   Borda, animasi penggabungan, dan pembanding engine.
-5. **Langkah pemenang dimainkan, lawan membalas** (Stockfish), lalu ronde berikutnya siap diisi.
+4. **Begitu usulan ketiga masuk, penilaian individual muncul otomatis** untuk semua akun: nilai C1–C5
+   tiap usulan dan satu tabel TOPSIS per anggota. Usulan dikunci pada tahap ini.
+5. **Ketua menekan "Jalankan konsensus (voting Borda)".** Akun lain melihat "menunggu Ketua" dan tidak
+   punya tombol itu (server menolak dengan 403). Semua akun lalu melihat tabel Borda, animasi
+   penggabungan, dan pembanding engine.
+6. **Langkah pemenang dimainkan, lawan membalas** (Stockfish), lalu ronde berikutnya siap diisi.
    Riwayat langkah diperbarui. Bila permainan selesai (skakmat/seri), tombol **Ronde baru** memulai
    permainan lagi dari posisi awal; riwayat permainan sebelumnya tetap tersimpan di server.
 
@@ -161,8 +192,7 @@ kerja nyata (menggabungkan sudut pandang yang saling berbeda), sementara penggun
 
 **Borda:** untuk n alternatif, bobot peringkat 1..n adalah n, n−1, ..., 1. Poin alternatif =
 jumlah (bobot Borda dari peringkatnya × skor preferensi V) dari ketiga anggota. Nilai Borda =
-poin / total poin. Nilai tertinggi menjadi keputusan kelompok. Aturan seri (karena tidak ada jabatan
-tertinggi): **dukungan usulan**, lalu **jumlah peringkat TOPSIS**, lalu **urutan usulan**.
+poin / total poin. Nilai tertinggi menjadi keputusan kelompok. Aturan seri: **dukungan usulan**, lalu **jumlah peringkat TOPSIS**, lalu **urutan usulan**.
 
 Bukti Borda benar-benar mengubah hasil ada di `test_gdss.py`: pada matriks contoh, TOPSIS gaya
 seimbang memilih alternatif 0 sementara Borda memilih alternatif 2. Dari 4997 matriks acak,
@@ -259,7 +289,7 @@ Tes:
 | GET | `/api/me` | pengguna yang sedang masuk |
 | GET | `/api/ronde` | keadaan ronde: kasus (FEN, nomor, riwayat, selesai), peserta + status usulan, usulan sendiri, langkah sah, hasil terakhir, status server. Aman dipanggil berkala — tidak pernah memanggil engine. |
 | POST | `/api/usul` | `{"langkah": "e2e4"}` → usulan satu langkah, tervalidasi legalitasnya. Bila ini usulan terakhir, respons berisi `dinilai: true` dan hasil konsensus. |
-| POST | `/api/konsensus` | menjalankan ulang penilaian bila otomatisnya gagal (mis. server sempat mati). Semua akun boleh. |
+| POST | `/api/konsensus` | **hanya Ketua (403 untuk akun lain)**: voting Borda atas penilaian individual semua anggota, lalu langkah pemenang dimainkan. Ditolak 409 bila belum semua anggota mengusulkan atau ronde sudah dikonsensuskan. |
 | POST | `/api/ulang` | ronde baru: permainan baru dari posisi awal, riwayat lama tetap tersimpan |
 | POST | `/api/keluar` | hapus sesi |
 
@@ -273,7 +303,7 @@ berparameter.
 
 Kata sandi disimpan sebagai hash PBKDF2 dengan garam. Sesi memakai cookie HttpOnly dan
 SameSite=Strict, berlaku 8 jam. Login dibatasi setelah lima kali gagal. Permintaan POST dengan
-Origin asing ditolak. Semua akun setara — tidak ada gerbang hak istimewa. Semua kueri SQL
+Origin asing ditolak. Hanya Ketua yang boleh menjalankan konsensus (dicek di server, bukan hanya disembunyikan di tampilan). Semua kueri SQL
 berparameter, teks dari server dimasukkan ke halaman lewat `textContent`, dan Content-Security-Policy
 melarang skrip inline. Aplikasi ini untuk demo kelompok di jaringan lokal, bukan untuk dipasang di
 internet publik tanpa HTTPS.

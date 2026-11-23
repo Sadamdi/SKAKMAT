@@ -13,7 +13,7 @@ di laptop (lokal) maupun di server.
         │
         ▼
  Uvicorn  ──  FastAPI (app.py)
-        │        ├─ rute /api/*      login, ronde, usul, konsensus, ulang, keluar
+        │        ├─ rute /api/*      login, ronde, usul, konsensus (Ketua saja), ulang, keluar
         │        ├─ rute /*          berkas statis dari static/
         │        └─ middleware       header keamanan, pemeriksaan Origin
         │
@@ -54,10 +54,13 @@ test_*.py         tes algoritma, mesin, dan ujung ke ujung
    SameSite=Strict).
 2. Browser memanggil `GET /api/ronde` tiap beberapa detik untuk status ronde.
 3. Anggota menggerakkan bidak → `POST /api/usul`; server memeriksa legalitas (python-chess).
-4. Saat usulan ketiga masuk, server menjalankan penilaian di dalam kunci ronde: ukur C1–C5 →
-   TOPSIS tiga kali (satu per gaya main) → Borda → mainkan langkah pemenang → balasan lawan →
-   buka ronde berikutnya. Semuanya disimpan di tabel `konsensus` sebagai jejak audit.
-5. Semua akun melihat hasil yang sama lewat `GET /api/ronde`.
+4. Saat usulan ketiga masuk, server menjalankan **penilaian individual** di dalam kunci ronde: gabungkan
+   usulan → ukur C1–C5 → TOPSIS satu kali per anggota (bobot gayanya). Hasilnya disimpan di tabel
+   `penilaian_individual` dan usulan dikunci.
+5. **Ketua** (jabatan tertinggi, konstanta `KETUA`) memanggil `POST /api/konsensus`: voting Borda atas
+   penilaian semua anggota → mainkan langkah pemenang → balasan lawan → buka ronde berikutnya. Hasil
+   disimpan di tabel `konsensus` sebagai jejak audit. Akun lain mendapat 403.
+6. Semua akun melihat hasil yang sama lewat `GET /api/ronde`.
 
 ## 5. Menjalankan secara lokal
 

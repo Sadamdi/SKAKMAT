@@ -18,7 +18,7 @@
 
   <section id="viewLogin" class="kartu login sembunyi">
     <h1>Masuk</h1>
-    <p class="catatan">Gunakan salah satu akun anggota tim: anggota1, anggota2, atau anggota3. Ketiganya setara; yang berbeda hanya gaya mainnya.</p>
+    <p class="catatan">Gunakan salah satu akun anggota tim: anggota1, anggota2, atau anggota3. Anggota 1 adalah Ketua (jabatan tertinggi) yang menjalankan konsensus; ketiganya sama-sama mengusulkan langkah dan menerima hasil.</p>
     <p id="infoLogin" class="pesan" role="status"></p>
     <form id="formLogin">
       <label>Nama pengguna<input id="inUser" autocomplete="username" required></label>
@@ -50,7 +50,7 @@
         <h3>Tim</h3>
         <p id="ringkasStatus" class="ringkas" role="status"></p>
         <ul id="status" class="status"></ul>
-        <p class="catatan">Usulan anggota lain baru terlihat setelah ketiganya masuk, supaya tiap usulan tetap independen. Setelah usulan ketiga masuk, penilaian berjalan otomatis.</p>
+        <p class="catatan">Usulan anggota lain baru terlihat setelah ketiganya masuk, supaya tiap usulan tetap independen. Setelah usulan ketiga masuk, penilaian individual tiap anggota muncul otomatis; Ketua lalu menjalankan konsensus (voting Borda).</p>
         <h3>Riwayat langkah</h3>
         <p id="riwayat" class="riwayat"></p>
         <div class="aksi">
@@ -62,9 +62,19 @@
       </aside>
     </section>
 
+    <section id="kartuIndividual" class="kartu hasil sembunyi" aria-labelledby="judulIndividual">
+      <h2 id="judulIndividual">Penilaian individual</h2>
+      <p class="catatan">Setiap anggota sudah dinilai sendiri-sendiri: nilai C1 sampai C5 tiap usulan diukur mesin, lalu TOPSIS dijalankan dengan bobot gaya main masing-masing anggota. Konsensus kelompok (voting Borda) baru dijalankan oleh Ketua sesudah ini.</p>
+      <ul id="daftarUsulanInd" class="daftar-usulan"></ul>
+      <div class="gulir"><table id="tabelKriteriaInd"></table></div>
+      <div id="tigaIndividual" class="tiga-topsis"></div>
+      <p id="infoKonsensus" class="catatan" role="status"></p>
+      <button id="btnKonsensus" type="button" class="sembunyi">Jalankan konsensus (voting Borda)</button>
+    </section>
+
     <section id="kartuHasil" class="kartu hasil" aria-labelledby="judulHasil">
       <h2 id="judulHasil">Hasil penilaian</h2>
-      <p id="belumHasil" class="catatan">Belum ada ronde yang dinilai di permainan ini. Hasil muncul di sini otomatis setelah ketiga anggota mengusulkan langkah.</p>
+      <p id="belumHasil" class="catatan">Belum ada ronde yang dinilai di permainan ini. Hasil muncul di sini setelah ketiga anggota mengusulkan langkah dan Ketua menjalankan konsensus.</p>
       <div id="isiHasil" class="sembunyi">
         <p id="pemenang" class="pemenang"></p>
         <p id="banding" class="banding"></p>

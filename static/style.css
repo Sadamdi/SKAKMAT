@@ -229,3 +229,6 @@ table.peringkat tr.total > * { font-weight: bold; border-top: 2px solid var(--ga
   .batang { grid-template-columns: 1fr max-content; }
   .batang-nama { grid-column: 1 / -1; }
 }
+
+.tag-ketua { font-weight: 700; }
+#btnKonsensus { margin-top: 8px; }
