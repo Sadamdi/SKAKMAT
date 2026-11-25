@@ -34,6 +34,8 @@ kapan saja; bila semua pemain keluar (atau diam 2 menit), pertandingan **berakhi
 |---|---|
 | 👤 Akun per pengguna | Daftar dan masuk, kata sandi PBKDF2, sesi cookie HttpOnly |
 | 🏠 Lobi dan pertandingan | Buat, gabung dengan kode, keluar; banyak pertandingan sekaligus |
+| 🔓 Publik atau privat | Pertandingan publik muncul di lobi; privat hanya bisa dimasuki dengan kode 5 karakter |
+| ⏪ Kembali ke giliran sebelumnya | Ketua dapat membatalkan giliran terakhir; semua anggota mengusulkan ulang |
 | 👑 Jabatan Ketua | Pembuat pertandingan; hanya Ketua yang boleh menjalankan konsensus (dicek di server, HTTP 403 untuk lainnya) |
 | 🎭 Gaya main | Menyerang, Seimbang, Bertahan: bobot TOPSIS berbeda per anggota |
 | 📐 Penilaian individual | Mesin mengukur C1 sampai C5, TOPSIS per anggota, terlihat semua orang |
@@ -252,16 +254,17 @@ Kata sandi demo dapat diganti dengan variabel `SKAKMAT_SANDI_ANGGOTA1` (dan `..2
 
 ## Alur penggunaan
 
+0. **Posisi awal.** Setiap permainan baru dimulai dari posisi awal catur biasa (SKAKMAT_POSISI=giuoco memakai pembukaan Giuoco Piano, dipakai tes).
 1. **Daftar atau masuk.** Setelah masuk, pemain berada di **lobi**: daftar pertandingan yang sedang berlangsung
    (anggota, gaya yang masih tersedia, kode 5 karakter), form **Buat pertandingan**, dan **Gabung dengan kode**.
-2. **Buat atau gabung.** Pembuat menjadi Ketua. Satu pemain hanya boleh berada di satu pertandingan; pertandingan
+2. **Buat atau gabung.** Pembuat menjadi Ketua dan memilih jenis pertandingan: **publik** (muncul di lobi) atau **privat** (hanya dimasuki dengan kode). Satu pemain hanya boleh berada di satu pertandingan; pertandingan
    penuh (3 pemain) tidak bisa dimasuki. Pemain baru boleh bergabung kapan saja, termasuk di tengah ronde.
 3. **Usulkan langkah dengan menggerakkan bidak.** Klik bidak putih (petak tujuan yang sah ditandai), lalu klik
    tujuan. Bisa juga diseret. Dengan keyboard: Tab ke bidak, Enter, Tab ke petak tujuan, Enter, Esc untuk batal.
    Usulan masih bisa diganti sampai anggota terakhir mengusulkan, dan usulan anggota lain belum terlihat.
 4. **Penilaian individual muncul otomatis** begitu semua anggota yang ada sudah mengusulkan: nilai C1 sampai C5
    dan satu tabel TOPSIS per anggota. Usulan dikunci pada tahap ini.
-5. **Ketua menekan "Jalankan konsensus (voting Borda)".** Akun lain melihat "menunggu Ketua" (server menolak
+5. **Ketua menekan "Jalankan konsensus (voting Borda)"** (tombol di bawah Riwayat langkah; **Kembali ke giliran sebelumnya** membatalkan giliran terakhir). Akun lain melihat "menunggu Ketua" (server menolak
    mereka dengan 403). Semua akun lalu melihat tabel Borda dan pembanding engine.
 6. **Lawan membalas** dengan catur biasa (Stockfish), dan ronde berikutnya dibuka.
 7. **Keluar.** Tombol *Keluar dari pertandingan* (kembali ke lobi), atau *Keluar* akun. Pemain yang tidak mengirim
@@ -410,12 +413,13 @@ Tes:
 | POST | `/api/keluar` | keluar akun; pemain otomatis keluar dari pertandingannya |
 | GET | `/api/me` | pengguna yang sedang masuk |
 | GET | `/api/lobi` | pertandingan yang berlangsung (anggota, gaya tersedia, penuh atau tidak) dan pertandingan milik pemain |
-| POST | `/api/pertandingan/buat` | `{"nama", "gaya"}` → pembuat menjadi Ketua |
+| POST | `/api/pertandingan/buat` | `{"nama", "gaya", "publik"}` → pembuat menjadi Ketua; `publik` false = privat |
 | POST | `/api/pertandingan/gabung` | `{"id" atau "kode", "gaya"}` → 409 bila penuh, sudah berakhir, gaya terpakai, atau pemain masih di pertandingan lain |
 | POST | `/api/pertandingan/keluar` | keluar dari pertandingan; mengakhirinya bila pemain terakhir |
 | GET | `/api/ronde` | keadaan ronde pertandingan pemain (`pertandingan: null` bila di lobi): kasus, peserta + status usulan, usulan sendiri, langkah sah, penilaian individual, hasil terakhir. Tidak pernah memanggil engine. |
 | POST | `/api/usul` | `{"langkah": "e2e4"}` → usulan satu langkah, tervalidasi legalitasnya. Bila ini usulan terakhir, respons berisi `penilaian_siap: true`. |
 | POST | `/api/konsensus` | **hanya Ketua pertandingan (403 untuk lainnya)**: voting Borda atas penilaian individual, lalu langkah pemenang dimainkan dan lawan membalas. 409 bila belum lengkap atau sudah dikonsensuskan. |
+| POST | `/api/mundur` | **hanya Ketua**: kembali ke giliran sebelumnya (403 lainnya, 409 di giliran pertama) |
 | POST | `/api/ulang` | permainan baru dari posisi awal di pertandingan yang sama; riwayat lama tersimpan |
 
 Endpoint alur lama (`/api/nilai`, `/api/kasus`, `/api/kasus-baru`, `/api/usul-kandidat`) menjawab **410 Gone**.

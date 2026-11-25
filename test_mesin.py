@@ -136,7 +136,7 @@ def chess_menteri():
 
 def nyalakan(env_tambahan):
     tmp = tempfile.mkdtemp()
-    env = dict(os.environ, SKAKMAT_DB=str(Path(tmp) / "uji.db"), **env_tambahan)
+    env = dict(os.environ, SKAKMAT_DB=str(Path(tmp) / "uji.db"), SKAKMAT_POSISI="giuoco", **env_tambahan)
     srv = subprocess.Popen([sys.executable, "app.py", "--port", str(PORT)], env=env,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(80):

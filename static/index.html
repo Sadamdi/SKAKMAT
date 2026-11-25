@@ -42,15 +42,19 @@
     <div id="pesanLobi" class="pesan" role="status"></div>
     <div class="kartu">
       <h2>Buat pertandingan</h2>
-      <p class="catatan">Kamu menjadi Ketua pertandingan: hanya Ketua yang menjalankan konsensus (voting Borda). Teman bergabung lewat daftar di bawah atau memakai kode pertandingan.</p>
+      <p class="catatan">Kamu menjadi Ketua pertandingan: hanya Ketua yang menjalankan konsensus (voting Borda). Pertandingan <strong>publik</strong> muncul di daftar di bawah; pertandingan <strong>privat</strong> tidak muncul dan hanya bisa dimasuki dengan kode 5 karakter.</p>
       <form id="formBuat" class="form-baris">
         <label>Nama pertandingan<input id="inNamaMatch" maxlength="40" placeholder="mis. Meja Kelompok 2"></label>
         <label>Gaya mainmu<select id="selGayaBuat"></select></label>
+        <label>Jenis pertandingan<select id="selJenis">
+          <option value="publik">Publik (muncul di daftar)</option>
+          <option value="privat">Privat (hanya lewat kode)</option>
+        </select></label>
         <button id="btnBuat" type="submit">Buat pertandingan</button>
       </form>
     </div>
     <div class="kartu">
-      <h2>Pertandingan yang sedang berlangsung</h2>
+      <h2>Pertandingan publik yang sedang berlangsung</h2>
       <div id="daftarMatch" class="daftar-match"></div>
       <form id="formKode" class="form-baris">
         <label>Gabung dengan kode<input id="inKode" maxlength="5" placeholder="5 karakter" autocomplete="off"></label>

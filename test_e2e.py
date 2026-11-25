@@ -23,6 +23,7 @@ from pathlib import Path
 import gdss
 
 PORT = 8765
+AWAL_STANDAR = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 AKUN = {"anggota1": "test123", "anggota2": "test123", "anggota3": "test123"}
 AWAL = "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2P2N2/PP1P1PPP/RNBQK2R w KQkq - 4 5"
 
@@ -54,7 +55,8 @@ def cek(kondisi, pesan):
 
 def nyalakan(db, port=PORT, env_tambahan=None, tangkap=False):
     """tangkap=True hanya untuk server berumur pendek: keluaran yang tidak dibaca bisa memenuhi pipa."""
-    env = dict(os.environ, SKAKMAT_DB=str(db), **(env_tambahan or {}))
+    env = dict(os.environ, SKAKMAT_DB=str(db), SKAKMAT_POSISI="giuoco")   # tes memakai pembukaan Giuoco Piano
+    env.update(env_tambahan or {})
     keluar = subprocess.PIPE if tangkap else subprocess.DEVNULL
     srv = subprocess.Popen([sys.executable, "app.py", "--port", str(port)], env=env,
                            stdout=keluar, stderr=subprocess.STDOUT, text=True)
@@ -439,6 +441,44 @@ def sandi_dari_lingkungan():
             srv.wait(timeout=10)
 
 
+def tes_publik_dan_posisi():
+    """Pertandingan publik muncul di lobi, privat hanya lewat kode; permainan baru mulai dari posisi awal catur."""
+    tmp = Path(tempfile.mkdtemp())
+    srv = nyalakan(tmp / "publik.db", env_tambahan={"SKAKMAT_POSISI": "standar"})
+    try:
+        a1, a2, a3 = masuk("anggota1"), masuk("anggota2"), masuk("anggota3")
+        st, j = a1.minta("/api/pertandingan/buat", {"nama": "Rahasia", "gaya": "menyerang", "publik": "ya"})
+        cek(st == 400, "nilai publik bukan true/false ditolak (400)")
+        st, j = a1.minta("/api/pertandingan/buat", {"nama": "Rahasia", "gaya": "menyerang", "publik": False})
+        priv = j["pertandingan"]
+        cek(st == 200 and priv["publik"] is False, "pertandingan privat dibuat")
+        st, jr = a1.minta("/api/ronde")
+        cek(jr["kasus"]["fen"] == AWAL_STANDAR and jr["kasus"]["riwayat"] == [] and len(jr["langkah_sah"]) == 20,
+            "permainan baru mulai dari posisi awal catur (riwayat kosong, 20 langkah sah)")
+        st, j = a1.minta("/api/usul", {"langkah": "e2e4"})
+        cek(st == 200 and j["usulan"]["san"] == "e4", "usulan pertama dari posisi awal diterima (e4)")
+        cek(a2.minta("/api/lobi")[1]["daftar"] == [], "pertandingan privat tidak muncul di lobi pemain lain")
+        st, j = a2.minta("/api/pertandingan/gabung", {"id": priv["id"], "gaya": "seimbang"})
+        cek(st == 404 and "kode" in j["galat"], f"privat tidak bisa dimasuki lewat id (404): {j.get('galat')!r}")
+        st, j = a2.minta("/api/pertandingan/gabung", {"kode": priv["kode"], "gaya": "seimbang"})
+        cek(st == 200 and j["pertandingan"]["publik"] is False, "privat bisa dimasuki lewat kode")
+        cek(a2.minta("/api/lobi")[1]["pertandingan_saya"] == priv["id"] and len(a2.minta("/api/lobi")[1]["daftar"]) == 1,
+            "anggota privat tetap melihat pertandingannya sendiri")
+        cek(a3.minta("/api/lobi")[1]["daftar"] == [], "pemain lain masih tidak melihat pertandingan privat")
+        for k in (a1, a2):
+            k.minta("/api/pertandingan/keluar", {})
+        st, j = a1.minta("/api/pertandingan/buat", {"nama": "Terbuka", "gaya": "menyerang"})
+        pub = j["pertandingan"]
+        cek(st == 200 and pub["publik"] is True, "tanpa pilihan, pertandingan bersifat publik")
+        d = a3.minta("/api/lobi")[1]["daftar"]
+        cek([m["id"] for m in d] == [pub["id"]], "pertandingan publik muncul di lobi pemain lain")
+        st, j = a3.minta("/api/pertandingan/gabung", {"id": pub["id"], "gaya": "bertahan"})
+        cek(st == 200, "pertandingan publik bisa dimasuki lewat daftar (id)")
+    finally:
+        srv.terminate()
+        srv.wait(timeout=10)
+
+
 def main():
     try:
         import chess  # noqa: F401
@@ -460,6 +500,7 @@ def main():
     migrasi()
     akhir_permainan()
     sandi_dari_lingkungan()
+    tes_publik_dan_posisi()
     print("SEMUA TES UJUNG KE UJUNG LOLOS")
 
 

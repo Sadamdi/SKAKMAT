@@ -55,6 +55,10 @@ Tabel utama: `pengguna` (akun), `sesi`, `pertandingan` (ruang main; `ketua_id`, 
 `konsensus` (jejak audit satu keputusan). Banyak pertandingan bisa berjalan bersamaan; semua data ronde terikat
 `pertandingan_id`.
 
+ERD basis data (SQLite, delapan tabel; `pertandingan.publik` 1 = publik, 0 = privat):
+
+![ERD basis data SKAKMAT](gambar/erd_skakmat.png)
+
 Alur satu pertandingan:
 
 1. Pengguna mendaftar atau login (`/api/daftar`, `/api/login`), lalu membuat atau bergabung ke pertandingan

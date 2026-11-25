@@ -61,11 +61,16 @@ AKUN = [  # (username, nama, sandi)
     ("anggota3", "Anggota 3", "test123"),
 ]
 
-# Posisi awal setiap permainan: Giuoco Piano setelah 1.e4 e5 2.Nf3 Nc6 3.Bc4 Bc5 4.c3 Nf6, putih berjalan.
-POSISI_AWAL = {
-    "fen": "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2P2N2/PP1P1PPP/RNBQK2R w KQkq - 4 5",
-    "riwayat": ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6"],
+# Posisi awal setiap permainan baru: posisi awal catur biasa (putih berjalan). SKAKMAT_POSISI=giuoco memakai
+# pembukaan Giuoco Piano yang sudah berjalan 4 langkah (1.e4 e5 2.Nf3 Nc6 3.Bc4 Bc5 4.c3 Nf6); dipakai oleh tes.
+POSISI = {
+    "standar": {"fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "riwayat": []},
+    "giuoco": {
+        "fen": "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2P2N2/PP1P1PPP/RNBQK2R w KQkq - 4 5",
+        "riwayat": ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3", "Nf6"],
+    },
 }
+POSISI_AWAL = POSISI.get((os.environ.get("SKAKMAT_POSISI") or "standar").strip().lower(), POSISI["standar"])
 
 COOKIE_AMAN = os.environ.get("SKAKMAT_COOKIE_SECURE") == "1"   # aktifkan bila dilayani lewat HTTPS
 percobaan = {}     # (ip, username) -> (jumlah gagal, waktu kunci habis)
@@ -96,7 +101,7 @@ CREATE TABLE IF NOT EXISTS sesi(
 CREATE TABLE IF NOT EXISTS pertandingan(
     id INTEGER PRIMARY KEY AUTOINCREMENT, kode TEXT UNIQUE NOT NULL, nama TEXT NOT NULL,
     ketua_id INTEGER REFERENCES pengguna(id), status TEXT NOT NULL DEFAULT 'berlangsung',
-    alasan_selesai TEXT, dibuat REAL NOT NULL, berakhir REAL);
+    alasan_selesai TEXT, dibuat REAL NOT NULL, berakhir REAL, publik INTEGER NOT NULL DEFAULT 1);
 -- Keanggotaan: aktif = 1 selama pemain berada di pertandingan. gaya (menyerang/seimbang/bertahan) unik per pertandingan.
 CREATE TABLE IF NOT EXISTS anggota(
     pertandingan_id INTEGER NOT NULL REFERENCES pertandingan(id) ON DELETE CASCADE,
@@ -160,6 +165,8 @@ def siapkan_db():
     with db() as c:
         c.executescript(SKEMA)
         c.execute(f"PRAGMA user_version = {VERSI_SKEMA}")
+        if "publik" not in {r["name"] for r in c.execute("PRAGMA table_info(pertandingan)")}:   # basis data skema 3 lama
+            c.execute("ALTER TABLE pertandingan ADD COLUMN publik INTEGER NOT NULL DEFAULT 1")
         for username, nama, sandi in AKUN:
             # SKAKMAT_SANDI_<USERNAME> (mis. SKAKMAT_SANDI_ANGGOTA1) menggantikan kata sandi bawaan; dipakai
             # saat server dibuka lewat internet supaya akun demo tidak bisa ditebak.
@@ -210,7 +217,7 @@ def pertandingan_saya(c, user_id):
 def ringkas_pertandingan(c, t):
     ag = anggota_aktif(c, t["id"])
     ketua = next((a for a in ag if a["ketua"]), None)
-    return {"id": t["id"], "kode": t["kode"], "nama": t["nama"], "status": t["status"],
+    return {"id": t["id"], "kode": t["kode"], "nama": t["nama"], "status": t["status"], "publik": bool(t["publik"]),
             "ketua": ketua["nama"] if ketua else None, "anggota": [
                 {"id": a["id"], "nama": a["nama"], "gaya": a["gaya"], "gaya_nama": a["gaya_nama"], "ketua": a["ketua"]}
                 for a in ag],
@@ -233,12 +240,12 @@ def pilih_gaya(c, pid, gaya):
     return gaya, None
 
 
-def buat_pertandingan(c, user, nama, gaya):
+def buat_pertandingan(c, user, nama, gaya, publik=True):
     if gaya not in (None, "") and gaya not in gdss.PROFIL:
         return None, (400, "Gaya main tidak dikenal. Pilihan: " + ", ".join(gdss.PROFIL) + ".")
     now = time.time()
-    cur = c.execute("INSERT INTO pertandingan(kode,nama,ketua_id,status,dibuat) VALUES(?,?,?,?,?)",
-                    (kode_baru(c), nama, user["id"], "berlangsung", now))
+    cur = c.execute("INSERT INTO pertandingan(kode,nama,ketua_id,status,dibuat,publik) VALUES(?,?,?,?,?,?)",
+                    (kode_baru(c), nama, user["id"], "berlangsung", now, 1 if publik else 0))
     pid = cur.lastrowid
     c.execute("INSERT INTO anggota(pertandingan_id,pengguna_id,gaya,bergabung,terakhir,aktif) VALUES(?,?,?,?,?,1)",
               (pid, user["id"], gaya or next(iter(gdss.PROFIL)), now, now))
@@ -574,7 +581,8 @@ def get_lobi(c, user, data, request):
     """Daftar pertandingan yang sedang berlangsung dan pertandingan milik pengguna (bila ada)."""
     saya = pertandingan_saya(c, user["id"])
     daftar = [ringkas_pertandingan(c, t) for t in
-              c.execute("SELECT * FROM pertandingan WHERE status='berlangsung' ORDER BY id DESC LIMIT 50")]
+              c.execute("SELECT * FROM pertandingan WHERE status='berlangsung' AND (publik=1 OR id=?) ORDER BY id DESC LIMIT 50",
+                        (saya["id"] if saya else -1,))]
     return JSONResponse({"pengguna": user, "pertandingan_saya": saya["id"] if saya else None, "daftar": daftar,
                          "profil": gdss.PROFIL, "maks_anggota": MAKS_ANGGOTA})
 
@@ -590,10 +598,13 @@ def post_buat(c, user, data, request):
     gaya = data.get("gaya")
     if gaya is not None and not isinstance(gaya, str):
         return galat(400, "Gaya main tidak valid.")
+    publik = data.get("publik", True)
+    if not isinstance(publik, bool):
+        return galat(400, "Pilihan publik atau privat tidak valid.")
     with _kunci_ronde:
         if pertandingan_saya(c, user["id"]):
             return galat(409, "Anda masih berada di sebuah pertandingan. Keluar dulu sebelum membuat yang baru.")
-        pid, g = buat_pertandingan(c, user, nama, gaya)
+        pid, g = buat_pertandingan(c, user, nama, gaya, publik)
         if g:
             return galat(*g)
         c.commit()
@@ -611,6 +622,10 @@ def post_gabung(c, user, data, request):
     if isinstance(kode, str) and kode.strip():
         r = c.execute("SELECT id FROM pertandingan WHERE kode=?", (kode.strip().upper(),)).fetchone()
         pid = r["id"] if r else None
+    elif isinstance(pid, int) and not isinstance(pid, bool):
+        r = c.execute("SELECT publik FROM pertandingan WHERE id=?", (pid,)).fetchone()
+        if r and not r["publik"]:                  # pertandingan privat tidak bisa dimasuki lewat id, hanya lewat kode
+            return galat(404, "Pertandingan tidak ditemukan. Pertandingan privat hanya bisa dimasuki dengan kode.")
     if isinstance(pid, bool) or not isinstance(pid, int):
         return galat(404, "Pertandingan tidak ditemukan.")
     with _kunci_ronde:

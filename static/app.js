@@ -361,7 +361,7 @@ function renderRonde() {
   $("identitasAkun").className = `nama-dm ${kelasDm(pengguna.id)}`;
   $("judulRonde").textContent = `Permainan ${kasus.permainan} · Ronde ${kasus.nomor}`;
   const pt = data.pertandingan;
-  $("infoMatch").replaceChildren(el("strong", "", pt.nama), ` · kode ${pt.kode} · ${pt.anggota.length} dari 3 pemain · Ketua: ${pt.ketua || "-"}`);
+  $("infoMatch").replaceChildren(el("strong", "", pt.nama), ` · ${pt.publik ? "publik" : "privat"} · kode ${pt.kode} · ${pt.anggota.length} dari 3 pemain · Ketua: ${pt.ketua || "-"}`);
   const akhir = kasus.selesai || (data.konsensus && data.konsensus.akhir);
   $("giliran").textContent = akhir ? "Permainan selesai" : `Tim Anda: ${kasus.sisi_tim}, giliran melangkah`;
   $("selesai").classList.toggle("sembunyi", !akhir);
@@ -973,7 +973,7 @@ const gabungKe = (isi, tombol) => aksiLobi(tombol, "Bergabung…", "/api/pertand
 
 $("formBuat").addEventListener("submit", (ev) => {
   ev.preventDefault();
-  aksiLobi($("btnBuat"), "Membuat…", "/api/pertandingan/buat", { nama: $("inNamaMatch").value, gaya: $("selGayaBuat").value });
+  aksiLobi($("btnBuat"), "Membuat…", "/api/pertandingan/buat", { nama: $("inNamaMatch").value, gaya: $("selGayaBuat").value, publik: $("selJenis").value === "publik" });
 });
 $("formKode").addEventListener("submit", (ev) => {
   ev.preventDefault();
