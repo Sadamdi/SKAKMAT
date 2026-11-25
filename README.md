@@ -1,21 +1,110 @@
-# SKAKMAT: Catur Konsultasi GDSS
+# ♟️ SKAKMAT: Catur Konsultasi GDSS
 
-Sistem Kolaborasi Analis untuk Keputusan Melangkah Antar Tim. Project akhir Praktikum Sistem
-Informasi, Kelompok 2, Kelas B.
+<div align="center">
 
-Pengguna **mendaftar atau masuk**, lalu **membuat pertandingan** atau **bergabung** ke pertandingan yang ada
-(maksimal 3 pemain per pertandingan, bisa banyak pertandingan sekaligus). Tim memainkan bidak putih melawan
-komputer:
+**Sistem Kolaborasi Analis untuk Keputusan Melangkah Antar Tim**
+*Project Akhir Praktikum Sistem Informasi, Kelompok 2, Kelas B, UIN Maulana Malik Ibrahim Malang*
 
-- **Giliran tim:** tiap anggota mengusulkan satu langkah dengan menggerakkan bidak di papan. Begitu semua
-  usulan masuk, **penilaian individual** tiap anggota tersedia (nilai C1 sampai C5 diukur mesin, lalu **TOPSIS**
-  dengan bobot gaya main masing-masing). Sesudah itu **Ketua (pembuat pertandingan, jabatan tertinggi)
-  menjalankan konsensus voting Borda** dan langkah pemenang dimainkan.
-- **Giliran lawan:** komputer membalas dengan algoritma catur biasa (Stockfish).
-- Pemain bisa **keluar** atau **bergabung** kapan saja. Bila semua pemain keluar (atau tidak aktif 2 menit),
-  pertandingan **berakhir otomatis**. Bila Ketua keluar, anggota yang bergabung paling awal menjadi Ketua.
+[![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+[![Stockfish](https://img.shields.io/badge/Stockfish-19-555555?style=for-the-badge)](https://stockfishchess.org/)
 
-Penjelasan rinci cara kerja dan bukti pengujiannya ada di [docs/CARA_KERJA.md](docs/CARA_KERJA.md).
+</div>
+
+---
+
+## 📖 Tentang Project
+
+SKAKMAT adalah **Group Decision Support System (GDSS)** berbentuk game catur. Beberapa orang (maksimal 3 per
+pertandingan) bermain catur **bersama melawan komputer**. Saat giliran tim, tiap orang mengusulkan satu langkah.
+Sistem menilai tiap usulan dengan **TOPSIS** menurut gaya main masing-masing, lalu **Ketua** (akun berjabatan
+tertinggi) menjalankan **voting Borda** untuk memutuskan satu langkah kelompok. Saat giliran lawan, komputer
+membalas dengan catur biasa (Stockfish).
+
+Pengguna **mendaftar atau masuk**, lalu **membuat pertandingan** atau **bergabung**. Boleh keluar dan bergabung
+kapan saja; bila semua pemain keluar (atau diam 2 menit), pertandingan **berakhir otomatis**.
+
+---
+
+## ✨ Fitur Unggulan
+
+| Fitur | Keterangan |
+|---|---|
+| 👤 Akun per pengguna | Daftar dan masuk, kata sandi PBKDF2, sesi cookie HttpOnly |
+| 🏠 Lobi dan pertandingan | Buat, gabung dengan kode, keluar; banyak pertandingan sekaligus |
+| 👑 Jabatan Ketua | Pembuat pertandingan; hanya Ketua yang boleh menjalankan konsensus (dicek di server, HTTP 403 untuk lainnya) |
+| 🎭 Gaya main | Menyerang, Seimbang, Bertahan: bobot TOPSIS berbeda per anggota |
+| 📐 Penilaian individual | Mesin mengukur C1 sampai C5, TOPSIS per anggota, terlihat semua orang |
+| 🗳️ Konsensus Borda | Penggabungan peringkat anggota menjadi satu keputusan, dengan aturan seri jelas |
+| 🤖 Lawan Stockfish | Giliran lawan memakai catur biasa, bukan TOPSIS |
+| 🔄 Keanggotaan dinamis | Keluar dan bergabung di tengah ronde, Ketua berpindah otomatis |
+| ♿ Aksesibilitas | Papan bisa dioperasikan penuh dengan keyboard, kontras WCAG AA, mode gelap |
+| 🌐 Main bareng online | Satu perintah menghasilkan alamat Cloudflare gratis sementara |
+
+---
+
+## 🧠 Cara Kerja Singkat
+
+```
+ usulan tiap anggota
+        │  (usulan sama digabung, dukungan dicatat)
+        ▼
+ mesin mengukur C1..C5 tiap usulan  ──►  matriks keputusan (sama untuk semua anggota)
+        ▼
+ TOPSIS sekali per anggota, bobot = gaya mainnya  ──►  penilaian individual (V dan peringkat)
+        ▼
+ Ketua menekan konsensus  ──►  voting Borda  ──►  satu pemenang
+        ▼
+ langkah pemenang dimainkan  ──►  Stockfish membalas  ──►  ronde berikutnya
+```
+
+| Kriteria | Arti | Jenis |
+|---|---|---|
+| C1 | Keamanan raja | benefit |
+| C2 | Keamanan material | benefit |
+| C3 | Penguasaan pusat papan | benefit |
+| C4 | Peluang serangan | benefit |
+| C5 | Risiko serangan balik lawan | cost |
+
+Contoh ronde 1: d4 mendapat poin Borda 4,3194, d3 3,7491, O-O 1,0693, sehingga d4 menang walau satu anggota
+memilih d3. Rumus lengkap, contoh hitungan, dan aturan seri ada di [docs/ALGORITMA.md](docs/ALGORITMA.md).
+
+---
+
+## 📚 Dokumentasi
+
+| Dokumen | Isi |
+|---|---|
+| [docs/PANDUAN_PENGGUNA.md](docs/PANDUAN_PENGGUNA.md) | Tutorial memakai aplikasi dari nol, masalah umum |
+| [docs/ALGORITMA.md](docs/ALGORITMA.md) | Seluruh algoritma: pengukuran C1–C5, TOPSIS, Borda, aturan seri, aturan anggota |
+| [docs/CARA_KERJA.md](docs/CARA_KERJA.md) | Contoh hitungan nyata satu ronde dan bukti pengujiannya |
+| [docs/PENJELASAN_KODE.md](docs/PENJELASAN_KODE.md) | Penjelasan per berkas dan fungsi |
+| [docs/ARSITEKTUR.md](docs/ARSITEKTUR.md) | Arsitektur, alasan pilihan teknologi, model data, deploy |
+
+---
+
+## 🛠️ Teknologi
+
+| Lapisan | Pilihan |
+|---|---|
+| Backend | Python 3, FastAPI, Uvicorn |
+| Basis data | SQLite (file `skakmat.db`) |
+| Frontend | HTML, CSS, JavaScript biasa (tanpa framework dan tanpa build) |
+| Catur | python-chess (wajib), Stockfish 19 (opsional, disarankan) |
+| Deploy | Docker / docker compose, Cloudflare Quick Tunnel untuk alamat sementara |
+
+---
+
+## 👥 Tim
+
+| Nama | Peran |
+|---|---|
+| Sulthan Adam Rahmadi | Backend, algoritma TOPSIS dan Borda, pengujian, dokumentasi |
+| mug31 | Frontend |
+
+---
 
 ## Arsitektur
 
@@ -292,7 +381,7 @@ build step).
 SKAKMAT/
 ├── app.py            FastAPI: API, basis data, sesi, alur ronde
 ├── Dockerfile, docker-compose.yml, .env.example   pengemasan dan konfigurasi server
-├── docs/ARSITEKTUR.md   arsitektur, pilihan teknologi, deploy
+├── docs/             ARSITEKTUR, ALGORITMA, CARA_KERJA, PENJELASAN_KODE, PANDUAN_PENGGUNA
 ├── gdss.py           TOPSIS, profil gaya main, voting Borda
 ├── mesin.py          legalitas langkah, ukur C1-C5, balasan lawan, pembanding engine (python-chess + Stockfish)
 ├── static/           index.html, style.css, app.js, favicon.svg
