@@ -2,7 +2,8 @@
 # tanpa akun). Semua teman cukup membuka alamat yang tercetak; tidak ada yang perlu dipasang di perangkat mereka.
 #   powershell -ExecutionPolicy Bypass -File .\jalankan_online.ps1
 # Tekan Ctrl+C untuk berhenti; server dan terowongan ikut mati.
-param([int]$Port = 8000)
+# Kata sandi tiga akun demo selalu test123 (ubah dengan -Sandi), dan basis data skakmat_online.db tetap disimpan.
+param([int]$Port = 8000, [string]$Sandi = "test123")
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
@@ -19,11 +20,9 @@ if (-not $cf) {
     exit 1
 }
 
-function Sandi-Acak { -join ((48..57) + (65..90) + (97..122) | Where-Object { $_ -notin 73, 79, 108 } | Get-Random -Count 10 | ForEach-Object { [char]$_ }) }
-$s1 = Sandi-Acak; $s2 = Sandi-Acak; $s3 = Sandi-Acak
+$s1 = $Sandi; $s2 = $Sandi; $s3 = $Sandi
 
 $db = Join-Path $PSScriptRoot "skakmat_online.db"
-Remove-Item $db -ErrorAction SilentlyContinue
 $env:SKAKMAT_DB = $db
 $env:SKAKMAT_COOKIE_SECURE = "1"
 $env:SKAKMAT_SANDI_ANGGOTA1 = $s1
@@ -51,15 +50,12 @@ try {
     Write-Host "  $url" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Akun demo (atau teman bisa Daftar akun baru di halaman masuk). Satu orang satu akun, boleh beda browser/perangkat:"
-    Write-Host "  anggota1          kata sandi: $s1"
-    Write-Host "  anggota2          kata sandi: $s2"
-    Write-Host "  anggota3          kata sandi: $s3"
+    Write-Host "  anggota1, anggota2, anggota3   kata sandi: $Sandi"
     Write-Host ""
     Write-Host "Alamat berubah tiap skrip dijalankan dan mati saat skrip dihentikan. Ctrl+C untuk berhenti."
     while ($true) { Start-Sleep -Seconds 5; if ($server.HasExited -or $tunnel.HasExited) { break } }
 }
 finally {
     foreach ($p in @($tunnel, $server)) { if ($p -and -not $p.HasExited) { Stop-Process -Id $p.Id -Force } }
-    Remove-Item $db -ErrorAction SilentlyContinue
     Write-Host "Berhenti."
 }

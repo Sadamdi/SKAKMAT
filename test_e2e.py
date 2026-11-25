@@ -23,7 +23,7 @@ from pathlib import Path
 import gdss
 
 PORT = 8765
-AKUN = {"anggota1": "anggota123-1", "anggota2": "anggota123-2", "anggota3": "anggota123-3"}
+AKUN = {"anggota1": "test123", "anggota2": "test123", "anggota3": "test123"}
 AWAL = "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/2P2N2/PP1P1PPP/RNBQK2R w KQkq - 4 5"
 
 
@@ -85,7 +85,7 @@ def tes_akun():
     anon = Klien()
     cek(anon.minta("/api/lobi")[0] == 401 and anon.minta("/api/ronde")[0] == 401, "tanpa login ditolak (401)")
     cek(anon.minta("/api/login", {"username": "anggota1", "sandi": "salah"})[0] == 401, "sandi salah ditolak")
-    cek(anon.minta("/api/login", {"username": "anggota1", "sandi": "anggota123-1"}, origin="http://evil.example")[0] == 403,
+    cek(anon.minta("/api/login", {"username": "anggota1", "sandi": "test123"}, origin="http://evil.example")[0] == 403,
         "POST dengan Origin asing ditolak (403)")
     for isi, alasan in (({"username": "AB", "nama": "Budi", "sandi": "rahasia1"}, "nama pengguna terlalu pendek"),
                         ({"username": "Budi Satu", "nama": "Budi", "sandi": "rahasia1"}, "nama pengguna memuat spasi/huruf besar"),
@@ -373,7 +373,7 @@ def migrasi():
     try:
         cadangan = list(tmp.glob("lama.db.lama-*"))
         k = Klien(port)
-        st, j = k.minta("/api/login", {"username": "anggota1", "sandi": "anggota123-1"})
+        st, j = k.minta("/api/login", {"username": "anggota1", "sandi": "test123"})
         cek(srv.poll() is None and st == 200, "basis data skema lama dimigrasi otomatis: server hidup, akun baru bisa masuk")
         with sqlite3.connect(cadangan[0]) as c:
             ada = c.execute("SELECT username FROM pengguna").fetchone()[0]
@@ -429,9 +429,9 @@ def sandi_dari_lingkungan():
         srv = nyalakan(db, env_tambahan={"SKAKMAT_SANDI_ANGGOTA1": sandi})
         try:
             k = Klien()
-            st_lama, _ = k.minta("/api/login", {"username": "anggota1", "sandi": "anggota123-1"})
+            st_lama, _ = k.minta("/api/login", {"username": "anggota1", "sandi": "test123"})
             st_baru, _ = k.minta("/api/login", {"username": "anggota1", "sandi": sandi})
-            st_lain, _ = Klien().minta("/api/login", {"username": "anggota2", "sandi": "anggota123-2"})
+            st_lain, _ = Klien().minta("/api/login", {"username": "anggota2", "sandi": "test123"})
             cek(st_lama == 401 and st_baru == 200 and st_lain == 200,
                 f"kata sandi dari lingkungan (start ke-{ulang + 1}): sandi bawaan ditolak, sandi baru diterima, akun lain tetap bawaan")
         finally:

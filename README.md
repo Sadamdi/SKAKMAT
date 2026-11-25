@@ -159,7 +159,7 @@ Skrip menyalakan server, membuka terowongan gratis Cloudflare (Quick Tunnel), la
 dengan akunnya sendiri (boleh beda browser). Alamat dan kata sandi berubah setiap skrip dijalankan, dan semuanya
 mati begitu skrip dihentikan (Ctrl+C). Laptop pemilik harus tetap menyala dan terhubung ke internet.
 
-Variabel `SKAKMAT_SANDI_ANGGOTA1` (dan `..2`, `..3`) mengganti kata sandi bawaan; skrip di atas mengisinya otomatis.
+Skrip di atas memakai kata sandi `test123` untuk ketiga akun demo (ganti dengan `-Sandi`), dan basis data `skakmat_online.db` tetap disimpan antar penyalaan.
 
 ## Cara menjalankan
 
@@ -237,9 +237,9 @@ angka, atau garis bawah; kata sandi minimal 6 karakter). Tiga akun demo dibuat o
 
 | Akun demo | Kata sandi |
 |---|---|
-| anggota1 | anggota123-1 |
-| anggota2 | anggota123-2 |
-| anggota3 | anggota123-3 |
+| anggota1 | test123 |
+| anggota2 | test123 |
+| anggota3 | test123 |
 
 Jabatan dan gaya main **bukan** melekat pada akun, tetapi pada pertandingan:
 

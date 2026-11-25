@@ -56,9 +56,9 @@ TIMEOUT_AKTIF = int(os.environ.get("SKAKMAT_TIMEOUT_AKTIF") or 120)   # detik ta
 
 # Akun demo (dibuat otomatis agar mudah dicoba). Pengguna lain mendaftar sendiri lewat /api/daftar.
 AKUN = [  # (username, nama, sandi)
-    ("anggota1", "Anggota 1", "anggota123-1"),
-    ("anggota2", "Anggota 2", "anggota123-2"),
-    ("anggota3", "Anggota 3", "anggota123-3"),
+    ("anggota1", "Anggota 1", "test123"),
+    ("anggota2", "Anggota 2", "test123"),
+    ("anggota3", "Anggota 3", "test123"),
 ]
 
 # Posisi awal setiap permainan: Giuoco Piano setelah 1.e4 e5 2.Nf3 Nc6 3.Bc4 Bc5 4.c3 Nf6, putih berjalan.
@@ -166,10 +166,11 @@ def siapkan_db():
             sandi_env = os.environ.get("SKAKMAT_SANDI_" + username.upper())
             if c.execute("SELECT 1 FROM pengguna WHERE username=?", (username,)).fetchone():
                 c.execute("UPDATE pengguna SET nama=? WHERE username=?", (nama, username))
-                if sandi_env:
-                    garam = secrets.token_bytes(16)
-                    c.execute("UPDATE pengguna SET garam=?, sandi=? WHERE username=?",
-                              (garam, hash_sandi(sandi_env, garam), username))
+                # Akun demo selalu kembali ke kata sandi bawaan (atau dari lingkungan) tiap server dinyalakan,
+                # jadi kata sandinya tetap sama walau server dimulai ulang atau basis data lama dipakai.
+                garam = secrets.token_bytes(16)
+                c.execute("UPDATE pengguna SET garam=?, sandi=? WHERE username=?",
+                          (garam, hash_sandi(sandi_env or sandi, garam), username))
             else:
                 garam = secrets.token_bytes(16)
                 c.execute("INSERT INTO pengguna(username,nama,garam,sandi,dibuat) VALUES(?,?,?,?,?)",
