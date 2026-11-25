@@ -106,10 +106,10 @@ Kelompok 2, Kelas B, Praktikum Sistem Informasi.
 
 | Nama | NIM |
 |---|---|
+| Sulthan Adam Rahmadi | 240605110109 |
 | Rahmat Rafi Indrayani | 240605110157 |
 | Muktibaskara Kusbianto | 240605110182 |
 | Ghofran | 240605110013 |
-| Sulthan Adam Rahmadi | 240605110109 |
 
 ---|---|
 | Sulthan Adam Rahmadi | Backend, algoritma TOPSIS dan Borda, pengujian, dokumentasi |
