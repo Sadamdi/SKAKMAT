@@ -89,6 +89,11 @@
         <h3>Riwayat langkah</h3>
         <p id="riwayat" class="riwayat"></p>
         <div class="aksi">
+          <button id="btnKonsensus" type="button" class="sembunyi">Jalankan konsensus (voting Borda)</button>
+          <button id="btnMundur" type="button" class="sekunder sembunyi">Kembali ke giliran sebelumnya</button>
+        </div>
+        <p id="ketKonsensus" class="catatan sembunyi"></p>
+        <div class="aksi">
           <button id="btnRondeBaru" type="button" class="sekunder" aria-describedby="ketRondeBaru">Permainan baru</button>
           <button id="btnKeluarMatch" type="button" class="sekunder">Keluar dari pertandingan</button>
           <button id="btnSegar" type="button" class="sekunder kecil">Segarkan</button>
@@ -105,7 +110,6 @@
       <div class="gulir"><table id="tabelKriteriaInd"></table></div>
       <div id="tigaIndividual" class="tiga-topsis"></div>
       <p id="infoKonsensus" class="catatan" role="status"></p>
-      <button id="btnKonsensus" type="button" class="sembunyi">Jalankan konsensus (voting Borda)</button>
     </section>
 
     <section id="kartuHasil" class="kartu hasil" aria-labelledby="judulHasil">

@@ -41,7 +41,7 @@ try {
     for ($i = 0; $i -lt 40 -and -not $url; $i++) {
         Start-Sleep -Milliseconds 750
         if (Test-Path $logTunnel) {
-            $m = Select-String -Path $logTunnel -Pattern "https://[a-z0-9-]+\.trycloudflare\.com" | Select-Object -First 1
+            $m = Select-String -Path $logTunnel -Pattern "https://(?!api\.)[a-z0-9-]+\.trycloudflare\.com" | Select-Object -First 1
             if ($m) { $url = $m.Matches[0].Value }
         }
     }

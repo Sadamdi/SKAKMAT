@@ -659,6 +659,7 @@ def get_ronde(c, user, data, request):
         "saya_ketua": saya_ketua,
         "penilaian": penilaian,                       # penilaian individual semua anggota, menunggu konsensus Ketua
         "bisa_konsensus": bool(penilaian) and saya_ketua,
+        "bisa_mundur": saya_ketua and kasus["nomor"] > 1,      # kembali ke giliran sebelumnya (hanya Ketua)
         "konsensus": konsensus,                       # ronde aktif sudah dikonsensuskan (hanya bila permainan selesai)
         "hasil_terakhir": konsensus or hasil_terakhir(c, kasus),
         "server": {"python_chess": mesin.pustaka_ada(), "stockfish": bool(mesin.path_engine())},
@@ -732,6 +733,29 @@ def post_ulang(c, user, data, request):
         return JSONResponse({"ok": True, "kasus": kasus_aktif(c, t["id"])})
 
 
+def post_mundur(c, user, data, request):
+    """Kembali ke giliran sebelumnya (hanya Ketua). Ronde berjalan dibuang; ronde sebelumnya dibuka lagi tanpa
+    konsensus, penilaian, dan usulan, sehingga semua anggota mengusulkan ulang. Riwayat tidak ikut berubah."""
+    with _kunci_ronde:
+        t, g = butuh_pertandingan(c, user)
+        if g:
+            return g
+        if t["ketua_id"] != user["id"]:
+            return galat(403, "Hanya Ketua yang boleh kembali ke giliran sebelumnya.")
+        kasus = kasus_aktif(c, t["id"])
+        if kasus["nomor"] <= 1:
+            return galat(409, "Sudah di giliran pertama permainan ini; tidak ada giliran sebelumnya.")
+        sebelumnya = c.execute("SELECT id FROM kasus WHERE pertandingan_id=? AND permainan=? AND nomor=?",
+                               (t["id"], kasus["permainan"], kasus["nomor"] - 1)).fetchone()
+        if not sebelumnya:
+            return galat(409, "Giliran sebelumnya tidak ditemukan.")
+        c.execute("DELETE FROM kasus WHERE id=?", (kasus["id"],))      # usulan dan penilaian ikut terhapus (CASCADE)
+        for tabel in ("konsensus", "penilaian_individual", "usulan"):
+            c.execute(f"DELETE FROM {tabel} WHERE kasus_id=?", (sebelumnya["id"],))
+        c.commit()
+        return JSONResponse({"ok": True, "kasus": kasus_aktif(c, t["id"])})
+
+
 app.add_api_route("/api/lobi", api(get_lobi), methods=["GET"])
 app.add_api_route("/api/pertandingan/buat", api(post_buat), methods=["POST"])
 app.add_api_route("/api/pertandingan/gabung", api(post_gabung), methods=["POST"])
@@ -740,6 +764,7 @@ app.add_api_route("/api/ronde", api(get_ronde), methods=["GET"])
 app.add_api_route("/api/usul", api(post_usul), methods=["POST"])
 app.add_api_route("/api/konsensus", api(post_konsensus), methods=["POST"])
 app.add_api_route("/api/ulang", api(post_ulang), methods=["POST"])
+app.add_api_route("/api/mundur", api(post_mundur), methods=["POST"])
 
 
 @app.post("/api/keluar")

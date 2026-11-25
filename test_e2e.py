@@ -154,6 +154,7 @@ def tes_lobi():
 # ------------------------------------------------------------------ 3. satu ronde penuh
 def tes_ronde(t, K):
     a1, a2, a3 = K["anggota1"], K["anggota2"], K["anggota3"]
+    cek(a1.minta("/api/mundur", {})[0] == 409, "mundur di giliran pertama ditolak (409)")
     st, j = a1.minta("/api/usul", {"langkah": "d2d5"})
     cek(st == 400 and "tidak sah" in j["galat"], f"usulan ilegal ditolak: {j.get('galat')!r}")
     cek(a1.minta("/api/usul", {"langkah": "e5e4"})[0] == 400, "menggerakkan bidak lawan ditolak")
@@ -212,6 +213,22 @@ def tes_ronde(t, K):
     cek(jr["kasus"]["nomor"] == 2 and len(jr["kasus"]["riwayat"]) == 10 and jr["penilaian"] is None
         and not any(p["sudah"] for p in jr["peserta"]), f"ronde 2 dibuka otomatis: {jr['kasus']['riwayat_teks']}")
     cek(a1.minta("/api/konsensus", {})[0] == 409, "ronde 2 belum bisa dikonsensuskan sebelum ada usulan")
+    # kembali ke giliran sebelumnya
+    cek(a2.minta("/api/ronde")[1]["bisa_mundur"] is False and a1.minta("/api/ronde")[1]["bisa_mundur"] is True,
+        "tombol kembali hanya untuk Ketua")
+    cek(a2.minta("/api/mundur", {})[0] == 403, "anggota biasa ditolak kembali ke giliran sebelumnya (403)")
+    st, j = a1.minta("/api/mundur", {})
+    cek(st == 200 and j["kasus"]["nomor"] == 1 and len(j["kasus"]["riwayat"]) == 8, "Ketua kembali ke giliran 1 (riwayat 8 langkah)")
+    st, jr = a2.minta("/api/ronde")
+    cek(jr["kasus"]["nomor"] == 1 and jr["penilaian"] is None and jr["hasil_terakhir"] is None
+        and not any(p["sudah"] for p in jr["peserta"]) and jr["bisa_mundur"] is False,
+        "giliran 1 dibuka lagi tanpa usulan, penilaian, dan konsensus")
+    for kl, lg in ((a1, "d2d4"), (a2, "d2d4"), (a3, "e1g1")):
+        kl.minta("/api/usul", {"langkah": lg})
+    st, j = a1.minta("/api/konsensus", {})
+    st2, jr = a1.minta("/api/ronde")
+    cek(st == 200 and jr["kasus"]["nomor"] == 2 and len(jr["kasus"]["riwayat"]) == 10,
+        "usulan ulang dan konsensus berjalan lagi; ronde 2 terbuka kembali")
 
 
 # ------------------------------------------------------------------ 4. anggota keluar / bergabung di tengah ronde

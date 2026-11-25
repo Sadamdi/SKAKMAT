@@ -417,9 +417,12 @@ let tandaIndividual = "";
 function renderIndividual() {
   const pen = data.penilaian;
   $("kartuIndividual").classList.toggle("sembunyi", !pen);
+  $("btnMundur").classList.toggle("sembunyi", !data.bisa_mundur);
+  $("btnKonsensus").classList.toggle("sembunyi", !pen || !data.bisa_konsensus);
+  $("ketKonsensus").classList.toggle("sembunyi", !pen || !data.bisa_konsensus);
   if (!pen) { tandaIndividual = ""; return; }
   const ketua = data.peserta.find((p) => p.ketua);
-  $("btnKonsensus").classList.toggle("sembunyi", !data.bisa_konsensus);
+  $("ketKonsensus").textContent = "Semua anggota sudah dinilai. Tekan tombol di atas untuk memutuskan langkah kelompok dengan voting Borda.";
   $("infoKonsensus").textContent = data.bisa_konsensus
     ? "Semua anggota sudah dinilai. Sebagai Ketua (jabatan tertinggi), Anda menjalankan voting Borda untuk memutuskan langkah kelompok."
     : `Semua anggota sudah dinilai. Menunggu Ketua (${ketua ? ketua.nama : "-"}) menjalankan konsensus.`;
@@ -883,6 +886,19 @@ $("btnKonsensus").addEventListener("click", () => kirimDengan($("btnKonsensus"),
     pesan(e.message, true);
   }
 }));
+$("btnMundur").addEventListener("click", () => {
+  if (!window.confirm("Kembali ke giliran sebelumnya? Langkah terakhir dibatalkan dan semua anggota mengusulkan ulang.")) return;
+  kirimDengan($("btnMundur"), "Kembali…", async () => {
+    try {
+      await api("/api/mundur", {});
+      pesan("Kembali ke giliran sebelumnya.", false);
+      await muat(true);
+    } catch (e) {
+      if (e.status === 401) return tampilLogin(SESI_HABIS);
+      pesan(e.message, true);
+    }
+  });
+});
 $("btnPutar").addEventListener("click", putarAnimasi);
 gerakDikurangi.addEventListener("change", () => { if (modelAnimasi) putarAnimasi(); });
 $("btnSegar").addEventListener("click", () => kirimDengan($("btnSegar"), "Menyegarkan…", () => muat(true)));
