@@ -77,6 +77,7 @@ memilih d3. Rumus lengkap, contoh hitungan, dan aturan seri ada di [docs/ALGORIT
 
 | Dokumen | Isi |
 |---|---|
+| [docs/TUTORIAL_LENGKAP.md](docs/TUTORIAL_LENGKAP.md) | **Mulai di sini.** Tutorial lengkap dengan screenshot, plus hitungan TOPSIS dan Borda langkah demi langkah |
 | [docs/PANDUAN_PENGGUNA.md](docs/PANDUAN_PENGGUNA.md) | Tutorial memakai aplikasi dari nol, masalah umum |
 | [docs/ALGORITMA.md](docs/ALGORITMA.md) | Seluruh algoritma: pengukuran C1–C5, TOPSIS, Borda, aturan seri, aturan anggota |
 | [docs/CARA_KERJA.md](docs/CARA_KERJA.md) | Contoh hitungan nyata satu ronde dan bukti pengujiannya |
